@@ -3153,6 +3153,181 @@ class StarRocksCompactionExpert {
       };
     }
   }
+
+  /**
+   * 获取此专家提供的 MCP 工具处理器
+   * @returns {Object} 工具名称到处理函数的映射
+   */
+  getToolHandlers() {
+    return {
+      'get_table_partitions_compaction_score': async (args, context) => {
+        const connection = context.connection;
+        const data = {};
+        await this.collectTableSpecificData(connection, data, {
+          targetDatabase: args.database_name,
+          targetTable: args.table_name
+        });
+
+        const partitions = data.target_table_analysis?.partitions || [];
+        const scoreThreshold = args.score_threshold || 0;
+
+        const filteredPartitions = partitions.filter(partition =>
+          partition.max_cs >= scoreThreshold
+        );
+
+        return {
+          database: args.database_name,
+          table: args.table_name,
+          score_threshold: scoreThreshold,
+          total_partitions: partitions.length,
+          filtered_partitions: filteredPartitions.length,
+          partitions: filteredPartitions.map(partition => ({
+            partition_name: partition.partition,
+            max_compaction_score: partition.max_cs,
+            avg_compaction_score: partition.avg_cs,
+            p50_compaction_score: partition.p50_cs,
+            row_count: partition.row_count,
+            data_size: partition.data_size,
+            storage_size: partition.storage_size,
+            buckets: partition.buckets,
+            replication_num: partition.replication_num
+          }))
+        };
+      },
+      'get_high_compaction_partitions': async (args, context) => {
+        const connection = context.connection;
+        const limit = args.limit || 50;
+        const threshold = args.threshold || 100;
+        return await this.getHighCompactionPartitions(connection, limit, threshold);
+      },
+      'get_compaction_threads': async (args, context) => {
+        const connection = context.connection;
+        return await this.getCompactionThreads(connection);
+      },
+      'set_compaction_threads': async (args, context) => {
+        const connection = context.connection;
+        return await this.setCompactionThreads(connection, args.thread_count);
+      },
+      'get_running_compaction_tasks': async (args, context) => {
+        const connection = context.connection;
+        const includeDetails = args.include_details !== false;
+        return await this.getRunningCompactionTasks(connection, includeDetails);
+      },
+      'analyze_high_compaction_score': async (args, context) => {
+        const connection = context.connection;
+        return await this.analyzeHighCompactionScore(
+          connection,
+          args.database_name || null,
+          args.include_details !== false
+        );
+      }
+    };
+  }
+
+  /**
+   * 获取此专家提供的 MCP 工具定义
+   */
+  getTools() {
+    return [
+      {
+        name: 'get_table_partitions_compaction_score',
+        description: '🔍 查询指定表的所有分区 Compaction Score',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            database_name: {
+              type: 'string',
+              description: '数据库名称'
+            },
+            table_name: {
+              type: 'string',
+              description: '表名称'
+            }
+          },
+          required: ['database_name', 'table_name']
+        }
+      },
+      {
+        name: 'get_high_compaction_partitions',
+        description: '⚠️ 查找系统中 Compaction Score 较高的分区（默认 >= 100）',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            threshold: {
+              type: 'number',
+              description: 'Compaction Score 阈值（默认100）',
+              default: 100
+            },
+            limit: {
+              type: 'number',
+              description: '返回结果数量限制（默认50）',
+              default: 50
+            }
+          },
+          required: []
+        }
+      },
+      {
+        name: 'get_compaction_threads',
+        description: '🔧 查询所有 BE 节点的 Compaction 线程配置',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          required: []
+        }
+      },
+      {
+        name: 'set_compaction_threads',
+        description: '⚙️ 设置指定 BE 节点的 Compaction 线程数',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            be_id: {
+              type: 'string',
+              description: 'BE 节点 ID'
+            },
+            thread_count: {
+              type: 'number',
+              description: '线程数量'
+            }
+          },
+          required: ['be_id', 'thread_count']
+        }
+      },
+      {
+        name: 'get_running_compaction_tasks',
+        description: '📊 查询当前正在运行的 Compaction 任务',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          required: []
+        }
+      },
+      {
+        name: 'analyze_high_compaction_score',
+        description: '🎯 深度分析高 Compaction Score 问题并提供专业建议',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            database_name: {
+              type: 'string',
+              description: '可选：目标数据库名称'
+            },
+            table_name: {
+              type: 'string',
+              description: '可选：目标表名称'
+            },
+            include_details: {
+              type: 'boolean',
+              description: '是否包含详细分析数据',
+              default: true
+            }
+          },
+          required: []
+        }
+      }
+    ];
+  }
 }
 
 export { StarRocksCompactionExpert };

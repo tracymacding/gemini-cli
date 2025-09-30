@@ -1759,6 +1759,78 @@ class StarRocksImportExpert {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
+
+  /**
+   * 获取此专家提供的 MCP 工具处理器
+   * @returns {Object} 工具名称到处理函数的映射
+   */
+  getToolHandlers() {
+    return {
+      'analyze_table_import_frequency': async (args, context) => {
+        const connection = context.connection;
+        const result = await this.analyzeTableImportFrequency(
+          connection,
+          args.database_name,
+          args.table_name,
+          args.include_details !== false
+        );
+
+        let report;
+        if (result.status === 'completed') {
+          report = this.formatTableFrequencyReport(result);
+        } else {
+          report = `❌ 表 ${args.database_name}.${args.table_name} 导入频率分析失败\n`;
+          report += `状态: ${result.status}\n`;
+          report += `原因: ${result.error || result.message}\n`;
+          report += `耗时: ${result.analysis_duration_ms}ms`;
+        }
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: report
+            },
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2)
+            }
+          ]
+        };
+      }
+    };
+  }
+
+  /**
+   * 获取此专家提供的 MCP 工具定义
+   */
+  getTools() {
+    return [
+      {
+        name: 'analyze_table_import_frequency',
+        description: '🔍 表级导入频率分析 - 深度分析指定表的导入模式、性能和频率特征',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            database_name: {
+              type: 'string',
+              description: '数据库名称'
+            },
+            table_name: {
+              type: 'string',
+              description: '表名称'
+            },
+            include_details: {
+              type: 'boolean',
+              description: '是否包含详细分析数据',
+              default: true
+            }
+          },
+          required: ['database_name', 'table_name']
+        }
+      }
+    ];
+  }
 }
 
 export { StarRocksImportExpert };

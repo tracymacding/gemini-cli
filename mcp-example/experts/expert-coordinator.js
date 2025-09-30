@@ -15,6 +15,10 @@ class StarRocksExpertCoordinator {
       import: new StarRocksImportExpert()
     };
 
+    // 工具处理器映射表: toolName -> {expert, handler}
+    this.toolHandlers = new Map();
+    this._registerToolHandlers();
+
     this.crossModuleRules = {
       // 存储空间不足影响Compaction效率
       storage_compaction_impact: {
@@ -498,6 +502,264 @@ class StarRocksExpertCoordinator {
       description: this.experts[name].description,
       version: this.experts[name].version
     }));
+  }
+
+  /**
+   * 注册所有专家的工具处理器
+   * @private
+   */
+  _registerToolHandlers() {
+    // 从每个专家注册工具处理器
+    for (const [expertName, expert] of Object.entries(this.experts)) {
+      if (typeof expert.getToolHandlers === 'function') {
+        const handlers = expert.getToolHandlers();
+        for (const [toolName, handler] of Object.entries(handlers)) {
+          this.toolHandlers.set(toolName, {
+            expert: expertName,
+            handler: handler.bind(expert) // 绑定 this 上下文
+          });
+        }
+      }
+    }
+
+    // 注册 coordinator 级别的工具处理器
+    const coordinatorHandlers = this.getCoordinatorToolHandlers();
+    for (const [toolName, handler] of Object.entries(coordinatorHandlers)) {
+      this.toolHandlers.set(toolName, {
+        expert: 'coordinator',
+        handler: handler.bind(this) // 绑定到 coordinator 实例
+      });
+    }
+  }
+
+  /**
+   * 获取 Coordinator 级别的工具处理器
+   * @returns {Object} 工具名称到处理函数的映射
+   */
+  getCoordinatorToolHandlers() {
+    return {
+      'expert_analysis': async (args, context) => {
+        const connection = context.connection;
+        const options = {
+          includeDetails: args.include_details || false,
+          expertScope: args.expert_scope || ['storage', 'compaction'],
+          includeCrossAnalysis: args.include_cross_analysis !== false
+        };
+
+        console.error('🚀 启动多专家协调分析...');
+        const analysis = await this.performCoordinatedAnalysis(connection, options);
+
+        // 返回包含类型信息的结果，用于格式化
+        return {
+          _needsFormatting: true,
+          _formatType: 'expert_analysis',
+          data: analysis
+        };
+      },
+      'storage_expert_analysis': async (args, context) => {
+        const connection = context.connection;
+        const includeDetails = args.include_details || false;
+        console.error('🚀 启动存储专家单独分析...');
+        const result = await this.experts.storage.analyze(connection, { includeDetails });
+        return {
+          _needsFormatting: true,
+          _formatType: 'single_expert',
+          _expertType: 'storage',
+          data: result
+        };
+      },
+      'compaction_expert_analysis': async (args, context) => {
+        const connection = context.connection;
+        const includeDetails = args.include_details || false;
+        console.error('🚀 启动 Compaction 专家单独分析...');
+        const result = await this.experts.compaction.analyze(connection, { includeDetails });
+        return {
+          _needsFormatting: true,
+          _formatType: 'single_expert',
+          _expertType: 'compaction',
+          data: result
+        };
+      },
+      'import_expert_analysis': async (args, context) => {
+        const connection = context.connection;
+        const includeDetails = args.include_details || false;
+        console.error('🚀 启动导入专家单独分析...');
+        const result = await this.experts.import.analyze(connection, { includeDetails });
+        return {
+          _needsFormatting: true,
+          _formatType: 'single_expert',
+          _expertType: 'import',
+          data: result
+        };
+      },
+      'get_available_experts': async (args, context) => {
+        const experts = this.getAvailableExperts();
+
+        // 格式化专家列表报告
+        let report = '🧠 StarRocks 专家系统 - 可用专家列表\n';
+        report += '=====================================\n\n';
+
+        experts.forEach((expert, index) => {
+          report += `${index + 1}. **${expert.display_name}** (${expert.name})\n`;
+          report += `   版本: ${expert.version}\n`;
+          report += `   ${expert.description}\n`;
+          report += `   专长领域: ${expert.capabilities.join(', ')}\n\n`;
+        });
+
+        report += `\n💡 提示: 使用 expert_analysis 工具可以同时调用多个专家进行协调分析\n`;
+        report += `💡 提示: 使用 {expert_type}_expert_analysis 可以调用单个专家进行专项分析\n`;
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: report
+            },
+            {
+              type: 'text',
+              text: JSON.stringify(experts, null, 2)
+            }
+          ]
+        };
+      }
+    };
+  }
+
+  /**
+   * 调用工具处理器
+   * @param {string} toolName - 工具名称
+   * @param {object} args - 工具参数
+   * @param {object} context - 上下文对象 (如 connection)
+   * @returns {Promise<object>} 工具执行结果
+   */
+  async callToolHandler(toolName, args, context) {
+    const handlerInfo = this.toolHandlers.get(toolName);
+
+    if (!handlerInfo) {
+      throw new Error(`No handler registered for tool: ${toolName}`);
+    }
+
+    const result = await handlerInfo.handler(args, context);
+
+    // Wrap result in MCP response format if not already wrapped
+    if (result && typeof result === 'object' && result.content) {
+      return result;
+    }
+
+    // Otherwise wrap as JSON text response
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(result, null, 2)
+        }
+      ]
+    };
+  }
+
+  /**
+   * 聚合所有专家的工具定义
+   * @returns {Array} 所有工具的定义数组
+   */
+  getAllTools() {
+    const allTools = [];
+
+    // 收集每个专家提供的工具
+    for (const [expertName, expert] of Object.entries(this.experts)) {
+      if (typeof expert.getTools === 'function') {
+        const tools = expert.getTools();
+        console.error(`📦 从 ${expertName} 专家加载了 ${tools.length} 个工具`);
+        allTools.push(...tools);
+      }
+    }
+
+    // 添加专家系统级别的工具
+    allTools.push(
+      {
+        name: 'expert_analysis',
+        description: '🧠 多专家协调分析 - 自动选择并协调多个专家进行综合分析',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: '分析问题或需求描述'
+            },
+            include_details: {
+              type: 'boolean',
+              description: '是否包含详细数据',
+              default: true
+            }
+          },
+          required: ['query']
+        }
+      },
+      {
+        name: 'storage_expert_analysis',
+        description: '💾 存储专家分析 - 专注于存储空间、磁盘使用和容量规划',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            include_details: {
+              type: 'boolean',
+              description: '是否包含详细数据',
+              default: true
+            }
+          },
+          required: []
+        }
+      },
+      {
+        name: 'compaction_expert_analysis',
+        description: '🗜️ Compaction专家分析 - 深度分析Compaction状态、线程配置和优化建议',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            database_name: {
+              type: 'string',
+              description: '可选：目标数据库'
+            },
+            table_name: {
+              type: 'string',
+              description: '可选：目标表'
+            },
+            include_details: {
+              type: 'boolean',
+              description: '是否包含详细数据',
+              default: true
+            }
+          },
+          required: []
+        }
+      },
+      {
+        name: 'import_expert_analysis',
+        description: '📥 Import专家分析 - 分析导入任务状态、性能和频率',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            include_details: {
+              type: 'boolean',
+              description: '是否包含详细分析数据',
+              default: true
+            }
+          },
+          required: []
+        }
+      },
+      {
+        name: 'get_available_experts',
+        description: '👥 获取可用专家列表 - 查看所有可用的专家系统及其职责',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          required: []
+        }
+      }
+    );
+
+    console.error(`✅ 总共注册了 ${allTools.length} 个 MCP 工具`);
+    return allTools;
   }
 }
 
