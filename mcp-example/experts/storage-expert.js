@@ -200,7 +200,7 @@ class StarRocksStorageExpert {
   diagnoseDiskUsage(backends, issues, warnings, criticals) {
     backends.forEach((be) => {
       const diskUsage = parseFloat(be.MaxDiskUsedPct?.replace('%', '')) || 0;
-      const availGB = this.parseStorageSize(be.AvailCapacity);
+      const availGB = parseStorageSize(be.AvailCapacity);
 
       if (diskUsage >= this.rules.disk_usage.emergency_threshold) {
         criticals.push({
@@ -335,7 +335,7 @@ class StarRocksStorageExpert {
   diagnoseDataDistribution(backends, partitions, insights, warnings) {
     // 计算数据分布均衡性
     const dataSizes = backends.map((be) =>
-      this.parseStorageSize(be.DataUsedCapacity),
+      parseStorageSize(be.DataUsedCapacity),
     );
     const totalData = dataSizes.reduce((sum, size) => sum + size, 0);
 
@@ -343,7 +343,7 @@ class StarRocksStorageExpert {
       const avgDataPerNode = totalData / backends.length;
 
       backends.forEach((be) => {
-        const nodeData = this.parseStorageSize(be.DataUsedCapacity);
+        const nodeData = parseStorageSize(be.DataUsedCapacity);
         const deviationPercent =
           Math.abs((nodeData - avgDataPerNode) / avgDataPerNode) * 100;
 
@@ -370,7 +370,7 @@ class StarRocksStorageExpert {
     // 分析大表分区
     if (partitions && partitions.length > 0) {
       const largePartitions = partitions.filter(
-        (p) => this.parseStorageSize(p.DATA_SIZE) > 10, // 大于10GB的分区
+        (p) => parseStorageSize(p.DATA_SIZE) > 10, // 大于10GB的分区
       );
 
       if (largePartitions.length > 0) {
@@ -626,29 +626,6 @@ class StarRocksStorageExpert {
   }
 
   /**
-   * 解析存储大小字符串为GB
-   */
-  parseStorageSize(sizeStr) {
-    if (!sizeStr) return 0;
-
-    const match = sizeStr.match(/^([\d.]+)\s*(\w+)$/);
-    if (!match) return 0;
-
-    const value = parseFloat(match[1]);
-    const unit = match[2].toUpperCase();
-
-    const toGB = {
-      B: 1 / 1024 ** 3,
-      KB: 1 / 1024 ** 2,
-      MB: 1 / 1024,
-      GB: 1,
-      TB: 1024,
-    };
-
-    return value * (toGB[unit] || 0);
-  }
-
-  /**
    * 估算磁盘满盈时间
    */
   estimateTimeToFull(availableGB, nodeIP) {
@@ -716,7 +693,7 @@ class StarRocksStorageExpert {
       };
 
       // 1. 检测架构类型（存算一体 vs 存算分离）
-      const architectureInfo = await this.detectArchitectureType(connection);
+      const architectureInfo = await detectArchitectureType(connection);
       analysis.architecture_type = architectureInfo.type;
 
       if (architectureInfo.type !== 'shared_data') {
@@ -919,8 +896,8 @@ class StarRocksStorageExpert {
         const tableStats = new Map();
 
         for (const partition of storageData.partition_storage) {
-          const dataSize = this.parseSize(partition.DATA_SIZE); // 用户数据大小
-          const storageSize = this.parseSize(partition.STORAGE_SIZE); // 对象存储占用
+          const dataSize = parseStorageSize(partition.DATA_SIZE); // 用户数据大小
+          const storageSize = parseStorageSize(partition.STORAGE_SIZE); // 对象存储占用
 
           totalDataSizeBytes += dataSize * 1024 ** 3;
           totalStorageSizeBytes += storageSize * 1024 ** 3;
@@ -977,8 +954,8 @@ class StarRocksStorageExpert {
         console.log('使用 tables_config (legacy) 方法计算');
 
         for (const table of storageData.table_storage) {
-          const dataSize = this.parseSize(table.DATA_SIZE);
-          const indexSize = this.parseSize(table.INDEX_SIZE);
+          const dataSize = parseStorageSize(table.DATA_SIZE);
+          const indexSize = parseStorageSize(table.INDEX_SIZE);
           const logicalSize = dataSize + indexSize;
 
           totalDataSizeBytes += logicalSize * 1024 ** 3;
@@ -995,7 +972,7 @@ class StarRocksStorageExpert {
         for (const node of storageData.compute_nodes) {
           if (node.DataUsedCapacity) {
             totalStorageSizeBytes +=
-              this.parseSize(node.DataUsedCapacity) * 1024 ** 3;
+              parseStorageSize(node.DataUsedCapacity) * 1024 ** 3;
           }
         }
       } else {
@@ -1378,33 +1355,6 @@ class StarRocksStorageExpert {
         },
       },
     ];
-  }
-
-  /**
-   * 解析大小字符串（如 "1.23 GB"）为数字（GB）
-   */
-  parseSize(sizeStr) {
-    if (!sizeStr || sizeStr === '0.00 Bytes') return 0;
-
-    const str = String(sizeStr).trim();
-    const match = str.match(/^([\d.]+)\s*([KMGT]?B|Bytes)?$/i);
-
-    if (!match) return 0;
-
-    const value = parseFloat(match[1]);
-    const unit = (match[2] || 'B').toUpperCase();
-
-    // 转换为 GB
-    const units = {
-      B: 1 / 1024 ** 3,
-      BYTES: 1 / 1024 ** 3,
-      KB: 1 / 1024 ** 2,
-      MB: 1 / 1024,
-      GB: 1,
-      TB: 1024,
-    };
-
-    return value * (units[unit] || 0);
   }
 }
 
