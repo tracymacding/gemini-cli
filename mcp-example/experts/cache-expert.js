@@ -11,6 +11,8 @@
 
 /* eslint-disable no-undef, @typescript-eslint/no-unused-vars */
 
+import { detectArchitectureType } from './common-utils.js';
+
 class StarRocksCacheExpert {
   constructor() {
     this.name = 'cache';
@@ -112,7 +114,8 @@ class StarRocksCacheExpert {
 
     try {
       // 1. 检测架构类型
-      data.architecture_type = await this.detectArchitectureType(connection);
+      const archInfo = await detectArchitectureType(connection);
+      data.architecture_type = archInfo.type;
 
       if (data.architecture_type !== 'shared_data') {
         console.log('当前集群为存算一体架构，不支持 Data Cache 分析');
@@ -141,36 +144,6 @@ class StarRocksCacheExpert {
     }
 
     return data;
-  }
-
-  /**
-   * 检测集群架构类型
-   */
-  async detectArchitectureType(connection) {
-    try {
-      const [config] = await connection.query(`
-        ADMIN SHOW FRONTEND CONFIG LIKE 'run_mode';
-      `);
-
-      if (config && config.length > 0) {
-        const runMode = config[0].Value || config[0].value;
-        return runMode === 'shared_data' ? 'shared_data' : 'shared_nothing';
-      }
-
-      return 'shared_nothing';
-    } catch (error) {
-      // 回退：尝试查询 COMPUTE NODES
-      try {
-        const [computeNodes] = await connection.query('SHOW COMPUTE NODES;');
-        if (computeNodes && computeNodes.length > 0) {
-          return 'shared_data';
-        }
-      } catch (cnError) {
-        // Ignore
-      }
-
-      return 'shared_nothing';
-    }
   }
 
   /**

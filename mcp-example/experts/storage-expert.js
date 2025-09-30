@@ -11,6 +11,8 @@
 
 /* eslint-disable no-undef, @typescript-eslint/no-unused-vars */
 
+import { detectArchitectureType, parseStorageSize } from './common-utils.js';
+
 class StarRocksStorageExpert {
   constructor() {
     this.name = 'storage';
@@ -764,90 +766,6 @@ class StarRocksStorageExpert {
         status: 'error',
         error: error.message,
         timestamp: new Date().toISOString(),
-      };
-    }
-  }
-
-  /**
-   * 检测集群架构类型
-   * 通过查询 FE 配置中的 run_mode 来判断
-   */
-  async detectArchitectureType(connection) {
-    try {
-      // 查询 run_mode 配置
-      const [config] = await connection.query(`
-        ADMIN SHOW FRONTEND CONFIG LIKE 'run_mode';
-      `);
-
-      if (config && config.length > 0) {
-        const runMode = config[0].Value || config[0].value;
-
-        if (runMode === 'shared_data') {
-          // 存算分离架构，可以进一步查询 Compute Nodes 信息
-          try {
-            const [computeNodes] = await connection.query(
-              'SHOW COMPUTE NODES;',
-            );
-            return {
-              type: 'shared_data',
-              description: '存算分离架构 (Shared-Data)',
-              run_mode: runMode,
-              compute_nodes_count: computeNodes ? computeNodes.length : 0,
-            };
-          } catch (cnError) {
-            return {
-              type: 'shared_data',
-              description: '存算分离架构 (Shared-Data)',
-              run_mode: runMode,
-            };
-          }
-        } else if (runMode === 'shared_nothing') {
-          return {
-            type: 'shared_nothing',
-            description: '存算一体架构 (Shared-Nothing)',
-            run_mode: runMode,
-          };
-        } else {
-          // run_mode 值异常，默认为存算一体
-          return {
-            type: 'shared_nothing',
-            description: '存算一体架构 (Shared-Nothing)',
-            run_mode: runMode,
-            note: `未知的 run_mode 值: ${runMode}，默认判断为存算一体`,
-          };
-        }
-      }
-
-      // 如果查询结果为空，默认为存算一体
-      return {
-        type: 'shared_nothing',
-        description: '存算一体架构 (Shared-Nothing)',
-        note: 'run_mode 配置查询结果为空，默认判断为存算一体',
-      };
-    } catch (error) {
-      // 如果查询失败（权限不足或版本不支持），尝试回退方法
-      console.error('查询 run_mode 失败:', error.message);
-
-      // 回退：尝试查询 COMPUTE NODES
-      try {
-        const [computeNodes] = await connection.query('SHOW COMPUTE NODES;');
-        if (computeNodes && computeNodes.length > 0) {
-          return {
-            type: 'shared_data',
-            description: '存算分离架构 (Shared-Data)',
-            compute_nodes_count: computeNodes.length,
-            note: '通过 COMPUTE NODES 回退检测',
-          };
-        }
-      } catch (cnError) {
-        // Ignore
-      }
-
-      // 默认判断为存算一体
-      return {
-        type: 'shared_nothing',
-        description: '存算一体架构 (Shared-Nothing)',
-        note: `检测失败: ${error.message}，默认判断为存算一体`,
       };
     }
   }
