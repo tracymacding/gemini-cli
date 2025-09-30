@@ -1,18 +1,28 @@
 /**
+ * @license
+ * Copyright 2025 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
  * StarRocks 专家协调器
  * 负责管理多个专家模块，协调跨模块诊断，整合建议
  */
 
+/* eslint-disable no-undef, @typescript-eslint/no-unused-vars */
+
 import { StarRocksStorageExpert } from './storage-expert.js';
 import { StarRocksCompactionExpert } from './compaction-expert-integrated.js';
 import { StarRocksImportExpert } from './import-expert.js';
+import { StarRocksCacheExpert } from './cache-expert.js';
 
 class StarRocksExpertCoordinator {
   constructor() {
     this.experts = {
       storage: new StarRocksStorageExpert(),
       compaction: new StarRocksCompactionExpert(),
-      import: new StarRocksImportExpert()
+      import: new StarRocksImportExpert(),
+      cache: new StarRocksCacheExpert(),
     };
 
     // 工具处理器映射表: toolName -> {expert, handler}
@@ -23,27 +33,31 @@ class StarRocksExpertCoordinator {
       // 存储空间不足影响Compaction效率
       storage_compaction_impact: {
         condition: (storageResult, compactionResult) => {
-          const diskCritical = storageResult.diagnosis_results.criticals.some(c =>
-            c.type.includes('disk'));
-          const highCS = compactionResult.diagnosis_results.criticals.some(c =>
-            c.type.includes('compaction_score'));
+          const diskCritical = storageResult.diagnosis_results.criticals.some(
+            (c) => c.type.includes('disk'),
+          );
+          const highCS = compactionResult.diagnosis_results.criticals.some(
+            (c) => c.type.includes('compaction_score'),
+          );
           return diskCritical && highCS;
         },
         impact: 'HIGH',
-        explanation: '磁盘空间不足导致Compaction效率下降，形成恶性循环'
+        explanation: '磁盘空间不足导致Compaction效率下降，形成恶性循环',
       },
 
       // Compaction线程不足与高CS分区的关系
       thread_cs_correlation: {
         condition: (storageResult, compactionResult) => {
-          const lowThreads = compactionResult.diagnosis_results.warnings.some(w =>
-            w.type === 'low_compaction_threads');
-          const highCS = compactionResult.diagnosis_results.criticals.some(c =>
-            c.type.includes('compaction_score'));
+          const lowThreads = compactionResult.diagnosis_results.warnings.some(
+            (w) => w.type === 'low_compaction_threads',
+          );
+          const highCS = compactionResult.diagnosis_results.criticals.some(
+            (c) => c.type.includes('compaction_score'),
+          );
           return lowThreads && highCS;
         },
         impact: 'MEDIUM',
-        explanation: 'Compaction线程不足是导致高CS积累的主要原因'
+        explanation: 'Compaction线程不足是导致高CS积累的主要原因',
       },
 
       // 导入失败与存储空间的关系
@@ -53,14 +67,16 @@ class StarRocksExpertCoordinator {
           const importResult = results.import;
           if (!storageResult || !importResult) return false;
 
-          const diskCritical = storageResult.diagnosis_results.criticals.some(c =>
-            c.type.includes('disk'));
-          const importFailures = importResult.diagnosis_results.criticals.some(c =>
-            c.type.includes('failure_rate'));
+          const diskCritical = storageResult.diagnosis_results.criticals.some(
+            (c) => c.type.includes('disk'),
+          );
+          const importFailures = importResult.diagnosis_results.criticals.some(
+            (c) => c.type.includes('failure_rate'),
+          );
           return diskCritical && importFailures;
         },
         impact: 'HIGH',
-        explanation: '存储空间不足可能导致导入作业失败，需要清理空间或扩容'
+        explanation: '存储空间不足可能导致导入作业失败，需要清理空间或扩容',
       },
 
       // 导入队列积压与Compaction的资源竞争
@@ -70,15 +86,59 @@ class StarRocksExpertCoordinator {
           const importResult = results.import;
           if (!compactionResult || !importResult) return false;
 
-          const queueBacklog = importResult.diagnosis_results.criticals.some(c =>
-            c.type === 'load_queue_backlog');
-          const compactionPressure = compactionResult.diagnosis_results.criticals.some(c =>
-            c.type === 'high_compaction_pressure');
+          const queueBacklog = importResult.diagnosis_results.criticals.some(
+            (c) => c.type === 'load_queue_backlog',
+          );
+          const compactionPressure =
+            compactionResult.diagnosis_results.criticals.some(
+              (c) => c.type === 'high_compaction_pressure',
+            );
           return queueBacklog && compactionPressure;
         },
         impact: 'MEDIUM',
-        explanation: '导入队列积压和Compaction压力可能存在CPU/内存资源竞争'
-      }
+        explanation: '导入队列积压和Compaction压力可能存在CPU/内存资源竞争',
+      },
+
+      // 缓存命中率低与Compaction的关系
+      cache_compaction_impact: {
+        condition: (results) => {
+          const cacheResult = results.cache;
+          const compactionResult = results.compaction;
+          if (!cacheResult || !compactionResult) return false;
+
+          const lowHitRatio = cacheResult.diagnosis_results.criticals?.some(
+            (c) => c.type === 'low_cache_hit_ratio',
+          );
+          const highCS = compactionResult.diagnosis_results.criticals?.some(
+            (c) => c.type.includes('compaction_score'),
+          );
+          return lowHitRatio && highCS;
+        },
+        impact: 'MEDIUM',
+        explanation:
+          '高 Compaction Score 导致数据碎片化，可能影响缓存效率降低命中率',
+      },
+
+      // 缓存容量不足与存储空间的关系
+      cache_storage_capacity: {
+        condition: (results) => {
+          const cacheResult = results.cache;
+          const storageResult = results.storage;
+          if (!cacheResult || !storageResult) return false;
+
+          const cacheCapacityCritical =
+            cacheResult.diagnosis_results.criticals?.some(
+              (c) => c.type === 'cache_capacity_critical',
+            );
+          const diskCritical = storageResult.diagnosis_results.criticals?.some(
+            (c) => c.type.includes('disk'),
+          );
+          return cacheCapacityCritical && diskCritical;
+        },
+        impact: 'HIGH',
+        explanation:
+          '本地磁盘空间不足，无法扩展缓存容量，建议优先清理存储或扩容',
+      },
     };
   }
 
@@ -88,8 +148,8 @@ class StarRocksExpertCoordinator {
   async performCoordinatedAnalysis(connection, options = {}) {
     const {
       includeDetails = false,
-      expertScope = ['storage', 'compaction', 'import'], // 可选择特定专家
-      includeCrossAnalysis = true
+      expertScope = ['storage', 'compaction', 'import', 'cache'], // 可选择特定专家
+      includeCrossAnalysis = true,
     } = options;
 
     try {
@@ -102,7 +162,10 @@ class StarRocksExpertCoordinator {
       const expertPromises = expertScope.map(async (expertName) => {
         if (this.experts[expertName]) {
           console.error(`   → ${expertName} 专家分析中...`);
-          const result = await this.experts[expertName].diagnose(connection, includeDetails);
+          const result = await this.experts[expertName].diagnose(
+            connection,
+            includeDetails,
+          );
           console.error(`   ✓ ${expertName} 专家完成`);
           return { expertName, result };
         }
@@ -112,7 +175,7 @@ class StarRocksExpertCoordinator {
       const expertResults = await Promise.all(expertPromises);
 
       // 整理专家结果
-      expertResults.forEach(item => {
+      expertResults.forEach((item) => {
         if (item) {
           results[item.expertName] = item.result;
         }
@@ -127,10 +190,16 @@ class StarRocksExpertCoordinator {
 
       // 3. 生成综合评估
       console.error('📊 生成综合评估报告...');
-      const comprehensiveAssessment = this.generateComprehensiveAssessment(results, crossModuleAnalysis);
+      const comprehensiveAssessment = this.generateComprehensiveAssessment(
+        results,
+        crossModuleAnalysis,
+      );
 
       // 4. 优化建议优先级排序
-      const prioritizedRecommendations = this.prioritizeRecommendations(results, crossModuleAnalysis);
+      const prioritizedRecommendations = this.prioritizeRecommendations(
+        results,
+        crossModuleAnalysis,
+      );
 
       const endTime = new Date();
       const totalAnalysisTime = endTime - startTime;
@@ -153,10 +222,11 @@ class StarRocksExpertCoordinator {
         analysis_metadata: {
           experts_count: Object.keys(results).length,
           total_issues_found: this.countTotalIssues(results),
-          cross_impacts_found: crossModuleAnalysis ? crossModuleAnalysis.impacts.length : 0
-        }
+          cross_impacts_found: crossModuleAnalysis
+            ? crossModuleAnalysis.impacts.length
+            : 0,
+        },
       };
-
     } catch (error) {
       throw new Error(`专家协调器分析失败: ${error.message}`);
     }
@@ -174,28 +244,38 @@ class StarRocksExpertCoordinator {
       const storageResult = expertResults.storage;
       const compactionResult = expertResults.compaction;
 
-      if (storageResult && compactionResult && rule.condition(storageResult, compactionResult)) {
+      if (
+        storageResult &&
+        compactionResult &&
+        rule.condition(storageResult, compactionResult)
+      ) {
         impacts.push({
           rule_name: ruleName,
           impact_level: rule.impact,
           explanation: rule.explanation,
           affected_modules: ['storage', 'compaction'],
-          recommended_approach: this.getCrossModuleRecommendation(ruleName)
+          recommended_approach: this.getCrossModuleRecommendation(ruleName),
         });
       }
     }
 
     // 分析模块间的数值关联性
     if (expertResults.storage && expertResults.compaction) {
-      correlations.push(this.analyzeStorageCompactionCorrelation(
-        expertResults.storage, expertResults.compaction
-      ));
+      correlations.push(
+        this.analyzeStorageCompactionCorrelation(
+          expertResults.storage,
+          expertResults.compaction,
+        ),
+      );
     }
 
     return {
       impacts: impacts,
-      correlations: correlations.filter(c => c), // 过滤空值
-      analysis_summary: this.generateCrossAnalysisSummary(impacts, correlations)
+      correlations: correlations.filter((c) => c), // 过滤空值
+      analysis_summary: this.generateCrossAnalysisSummary(
+        impacts,
+        correlations,
+      ),
     };
   }
 
@@ -210,7 +290,7 @@ class StarRocksExpertCoordinator {
       type: 'storage_compaction_health_correlation',
       storage_health_score: storageHealth,
       compaction_health_score: compactionHealth,
-      correlation_strength: 'UNKNOWN'
+      correlation_strength: 'UNKNOWN',
     };
 
     // 分析健康分数的相关性
@@ -243,8 +323,8 @@ class StarRocksExpertCoordinator {
           '2. 暂停非关键数据导入，减少新CS产生',
           '3. 分批手动触发Compaction，优先处理高CS分区',
           '4. 监控磁盘空间恢复和CS下降情况',
-          '5. 制定长期容量规划和Compaction策略'
-        ]
+          '5. 制定长期容量规划和Compaction策略',
+        ],
       },
       thread_cs_correlation: {
         approach: 'configuration_optimization',
@@ -253,16 +333,18 @@ class StarRocksExpertCoordinator {
           '1. 增加Compaction线程数至推荐值',
           '2. 监控Compaction任务执行效率',
           '3. 评估CS下降速度',
-          '4. 必要时考虑临时手动Compaction'
-        ]
-      }
+          '4. 必要时考虑临时手动Compaction',
+        ],
+      },
     };
 
-    return recommendations[ruleName] || {
-      approach: 'general_coordination',
-      priority: 'MEDIUM',
-      steps: ['需要协调多个模块的配置和操作']
-    };
+    return (
+      recommendations[ruleName] || {
+        approach: 'general_coordination',
+        priority: 'MEDIUM',
+        steps: ['需要协调多个模块的配置和操作'],
+      }
+    );
   }
 
   /**
@@ -270,27 +352,31 @@ class StarRocksExpertCoordinator {
    */
   generateComprehensiveAssessment(expertResults, crossModuleAnalysis) {
     // 计算整体健康分数
-    const expertScores = Object.values(expertResults).map(result => {
+    const expertScores = Object.values(expertResults).map((result) => {
       if (result.storage_health) return result.storage_health.score;
       if (result.compaction_health) return result.compaction_health.score;
       return 100;
     });
 
-    const averageScore = expertScores.reduce((sum, score) => sum + score, 0) / expertScores.length;
+    const averageScore =
+      expertScores.reduce((sum, score) => sum + score, 0) / expertScores.length;
 
     // 跨模块影响的扣分
-    const crossImpactPenalty = crossModuleAnalysis ? crossModuleAnalysis.impacts.length * 10 : 0;
+    const crossImpactPenalty = crossModuleAnalysis
+      ? crossModuleAnalysis.impacts.length * 10
+      : 0;
     const finalScore = Math.max(0, averageScore - crossImpactPenalty);
 
     // 确定整体状态
     let overallStatus = 'HEALTHY';
-    const hasCriticals = Object.values(expertResults).some(result =>
-      result.diagnosis_results.criticals.length > 0
+    const hasCriticals = Object.values(expertResults).some(
+      (result) => result.diagnosis_results.criticals.length > 0,
     );
-    const hasWarnings = Object.values(expertResults).some(result =>
-      result.diagnosis_results.warnings.length > 0
+    const hasWarnings = Object.values(expertResults).some(
+      (result) => result.diagnosis_results.warnings.length > 0,
     );
-    const hasCrossImpacts = crossModuleAnalysis && crossModuleAnalysis.impacts.length > 0;
+    const hasCrossImpacts =
+      crossModuleAnalysis && crossModuleAnalysis.impacts.length > 0;
 
     if (hasCriticals || hasCrossImpacts) {
       overallStatus = 'CRITICAL';
@@ -310,14 +396,27 @@ class StarRocksExpertCoordinator {
       expert_scores: Object.keys(expertResults).reduce((acc, expertName) => {
         const result = expertResults[expertName];
         acc[expertName] = {
-          score: result.storage_health?.score || result.compaction_health?.score || 100,
-          status: result.storage_health?.status || result.compaction_health?.status || 'HEALTHY'
+          score:
+            result.storage_health?.score ||
+            result.compaction_health?.score ||
+            100,
+          status:
+            result.storage_health?.status ||
+            result.compaction_health?.status ||
+            'HEALTHY',
         };
         return acc;
       }, {}),
       cross_module_impact: hasCrossImpacts,
-      system_risk_assessment: this.assessSystemRisk(expertResults, crossModuleAnalysis),
-      summary: this.generateOverallSummary(overallStatus, Object.keys(expertResults), hasCrossImpacts)
+      system_risk_assessment: this.assessSystemRisk(
+        expertResults,
+        crossModuleAnalysis,
+      ),
+      summary: this.generateOverallSummary(
+        overallStatus,
+        Object.keys(expertResults),
+        hasCrossImpacts,
+      ),
     };
   }
 
@@ -336,15 +435,15 @@ class StarRocksExpertCoordinator {
           type: 'expert_critical_issues',
           count: criticals.length,
           risk_level: 'HIGH',
-          description: `${expertName}模块发现${criticals.length}个严重问题`
+          description: `${expertName}模块发现${criticals.length}个严重问题`,
         });
       }
     });
 
     // 检查跨模块影响
     if (crossModuleAnalysis && crossModuleAnalysis.impacts.length > 0) {
-      const highImpacts = crossModuleAnalysis.impacts.filter(impact =>
-        impact.impact_level === 'HIGH'
+      const highImpacts = crossModuleAnalysis.impacts.filter(
+        (impact) => impact.impact_level === 'HIGH',
       );
 
       if (highImpacts.length > 0) {
@@ -353,7 +452,7 @@ class StarRocksExpertCoordinator {
           type: 'system_level_impact',
           count: highImpacts.length,
           risk_level: 'CRITICAL',
-          description: '发现系统级联问题，需要综合处理'
+          description: '发现系统级联问题，需要综合处理',
         });
       }
     }
@@ -361,8 +460,11 @@ class StarRocksExpertCoordinator {
     return {
       total_risks: risks.length,
       risk_breakdown: risks,
-      overall_risk_level: risks.some(r => r.risk_level === 'CRITICAL') ? 'CRITICAL' :
-                          risks.some(r => r.risk_level === 'HIGH') ? 'HIGH' : 'MEDIUM'
+      overall_risk_level: risks.some((r) => r.risk_level === 'CRITICAL')
+        ? 'CRITICAL'
+        : risks.some((r) => r.risk_level === 'HIGH')
+          ? 'HIGH'
+          : 'MEDIUM',
     };
   }
 
@@ -375,11 +477,11 @@ class StarRocksExpertCoordinator {
     // 收集所有专家建议
     Object.entries(expertResults).forEach(([expertName, result]) => {
       if (result.professional_recommendations) {
-        result.professional_recommendations.forEach(rec => {
+        result.professional_recommendations.forEach((rec) => {
           allRecommendations.push({
             ...rec,
             source_expert: expertName,
-            source_type: 'expert_recommendation'
+            source_type: 'expert_recommendation',
           });
         });
       }
@@ -387,36 +489,44 @@ class StarRocksExpertCoordinator {
 
     // 添加跨模块协调建议
     if (crossModuleAnalysis && crossModuleAnalysis.impacts.length > 0) {
-      crossModuleAnalysis.impacts.forEach(impact => {
+      crossModuleAnalysis.impacts.forEach((impact) => {
         if (impact.recommended_approach) {
           allRecommendations.push({
             category: 'cross_module_coordination',
             priority: impact.recommended_approach.priority,
             title: `跨模块协调: ${impact.explanation}`,
             description: '需要协调多个模块的综合处理方案',
-            professional_actions: impact.recommended_approach.steps.map(step => ({
-              action: step,
-              risk_level: 'MEDIUM',
-              coordination_required: true
-            })),
+            professional_actions: impact.recommended_approach.steps.map(
+              (step) => ({
+                action: step,
+                risk_level: 'MEDIUM',
+                coordination_required: true,
+              }),
+            ),
             source_expert: 'coordinator',
             source_type: 'cross_module_recommendation',
-            affected_modules: impact.affected_modules
+            affected_modules: impact.affected_modules,
           });
         }
       });
     }
 
     // 按优先级和影响范围排序
-    const priorityOrder = { 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1 };
+    const priorityOrder = { HIGH: 3, MEDIUM: 2, LOW: 1 };
 
     return allRecommendations
       .sort((a, b) => {
         // 首先按跨模块建议优先
-        if (a.source_type === 'cross_module_recommendation' && b.source_type !== 'cross_module_recommendation') {
+        if (
+          a.source_type === 'cross_module_recommendation' &&
+          b.source_type !== 'cross_module_recommendation'
+        ) {
           return -1;
         }
-        if (b.source_type === 'cross_module_recommendation' && a.source_type !== 'cross_module_recommendation') {
+        if (
+          b.source_type === 'cross_module_recommendation' &&
+          a.source_type !== 'cross_module_recommendation'
+        ) {
           return 1;
         }
 
@@ -426,8 +536,10 @@ class StarRocksExpertCoordinator {
       .map((rec, index) => ({
         ...rec,
         execution_order: index + 1,
-        coordination_notes: rec.source_type === 'cross_module_recommendation' ?
-          '此建议需要多个模块协调配合执行' : null
+        coordination_notes:
+          rec.source_type === 'cross_module_recommendation'
+            ? '此建议需要多个模块协调配合执行'
+            : null,
       }));
   }
 
@@ -451,7 +563,9 @@ class StarRocksExpertCoordinator {
     const summaryParts = [];
 
     if (impacts.length > 0) {
-      const highImpacts = impacts.filter(i => i.impact_level === 'HIGH').length;
+      const highImpacts = impacts.filter(
+        (i) => i.impact_level === 'HIGH',
+      ).length;
       if (highImpacts > 0) {
         summaryParts.push(`发现${highImpacts}个高影响级别的跨模块问题`);
       } else {
@@ -460,7 +574,9 @@ class StarRocksExpertCoordinator {
     }
 
     if (correlations.length > 0) {
-      const highCorrelations = correlations.filter(c => c.correlation_strength === 'HIGH').length;
+      const highCorrelations = correlations.filter(
+        (c) => c.correlation_strength === 'HIGH',
+      ).length;
       if (highCorrelations > 0) {
         summaryParts.push(`模块间存在${highCorrelations}个高相关性指标`);
       }
@@ -497,10 +613,10 @@ class StarRocksExpertCoordinator {
    * 获取可用专家列表
    */
   getAvailableExperts() {
-    return Object.keys(this.experts).map(name => ({
+    return Object.keys(this.experts).map((name) => ({
       name: name,
       description: this.experts[name].description,
-      version: this.experts[name].version
+      version: this.experts[name].version,
     }));
   }
 
@@ -516,7 +632,7 @@ class StarRocksExpertCoordinator {
         for (const [toolName, handler] of Object.entries(handlers)) {
           this.toolHandlers.set(toolName, {
             expert: expertName,
-            handler: handler.bind(expert) // 绑定 this 上下文
+            handler: handler.bind(expert), // 绑定 this 上下文
           });
         }
       }
@@ -527,7 +643,7 @@ class StarRocksExpertCoordinator {
     for (const [toolName, handler] of Object.entries(coordinatorHandlers)) {
       this.toolHandlers.set(toolName, {
         expert: 'coordinator',
-        handler: handler.bind(this) // 绑定到 coordinator 实例
+        handler: handler.bind(this), // 绑定到 coordinator 实例
       });
     }
   }
@@ -538,61 +654,70 @@ class StarRocksExpertCoordinator {
    */
   getCoordinatorToolHandlers() {
     return {
-      'expert_analysis': async (args, context) => {
+      expert_analysis: async (args, context) => {
         const connection = context.connection;
         const options = {
           includeDetails: args.include_details || false,
           expertScope: args.expert_scope || ['storage', 'compaction'],
-          includeCrossAnalysis: args.include_cross_analysis !== false
+          includeCrossAnalysis: args.include_cross_analysis !== false,
         };
 
         console.error('🚀 启动多专家协调分析...');
-        const analysis = await this.performCoordinatedAnalysis(connection, options);
+        const analysis = await this.performCoordinatedAnalysis(
+          connection,
+          options,
+        );
 
         // 返回包含类型信息的结果，用于格式化
         return {
           _needsFormatting: true,
           _formatType: 'expert_analysis',
-          data: analysis
+          data: analysis,
         };
       },
-      'storage_expert_analysis': async (args, context) => {
+      storage_expert_analysis: async (args, context) => {
         const connection = context.connection;
         const includeDetails = args.include_details || false;
         console.error('🚀 启动存储专家单独分析...');
-        const result = await this.experts.storage.analyze(connection, { includeDetails });
+        const result = await this.experts.storage.analyze(connection, {
+          includeDetails,
+        });
         return {
           _needsFormatting: true,
           _formatType: 'single_expert',
           _expertType: 'storage',
-          data: result
+          data: result,
         };
       },
-      'compaction_expert_analysis': async (args, context) => {
+      compaction_expert_analysis: async (args, context) => {
         const connection = context.connection;
         const includeDetails = args.include_details || false;
         console.error('🚀 启动 Compaction 专家单独分析...');
-        const result = await this.experts.compaction.analyze(connection, { includeDetails });
+        const result = await this.experts.compaction.analyze(connection, {
+          includeDetails,
+        });
         return {
           _needsFormatting: true,
           _formatType: 'single_expert',
           _expertType: 'compaction',
-          data: result
+          data: result,
         };
       },
-      'import_expert_analysis': async (args, context) => {
+      import_expert_analysis: async (args, context) => {
         const connection = context.connection;
         const includeDetails = args.include_details || false;
         console.error('🚀 启动导入专家单独分析...');
-        const result = await this.experts.import.analyze(connection, { includeDetails });
+        const result = await this.experts.import.analyze(connection, {
+          includeDetails,
+        });
         return {
           _needsFormatting: true,
           _formatType: 'single_expert',
           _expertType: 'import',
-          data: result
+          data: result,
         };
       },
-      'get_available_experts': async (args, context) => {
+      get_available_experts: async (args, context) => {
         const experts = this.getAvailableExperts();
 
         // 格式化专家列表报告
@@ -613,15 +738,15 @@ class StarRocksExpertCoordinator {
           content: [
             {
               type: 'text',
-              text: report
+              text: report,
             },
             {
               type: 'text',
-              text: JSON.stringify(experts, null, 2)
-            }
-          ]
+              text: JSON.stringify(experts, null, 2),
+            },
+          ],
         };
-      }
+      },
     };
   }
 
@@ -651,9 +776,9 @@ class StarRocksExpertCoordinator {
       content: [
         {
           type: 'text',
-          text: JSON.stringify(result, null, 2)
-        }
-      ]
+          text: JSON.stringify(result, null, 2),
+        },
+      ],
     };
   }
 
@@ -683,16 +808,16 @@ class StarRocksExpertCoordinator {
           properties: {
             query: {
               type: 'string',
-              description: '分析问题或需求描述'
+              description: '分析问题或需求描述',
             },
             include_details: {
               type: 'boolean',
               description: '是否包含详细数据',
-              default: true
-            }
+              default: true,
+            },
           },
-          required: ['query']
-        }
+          required: ['query'],
+        },
       },
       {
         name: 'storage_expert_analysis',
@@ -703,34 +828,35 @@ class StarRocksExpertCoordinator {
             include_details: {
               type: 'boolean',
               description: '是否包含详细数据',
-              default: true
-            }
+              default: true,
+            },
           },
-          required: []
-        }
+          required: [],
+        },
       },
       {
         name: 'compaction_expert_analysis',
-        description: '🗜️ Compaction专家分析 - 深度分析Compaction状态、线程配置和优化建议',
+        description:
+          '🗜️ Compaction专家分析 - 深度分析Compaction状态、线程配置和优化建议',
         inputSchema: {
           type: 'object',
           properties: {
             database_name: {
               type: 'string',
-              description: '可选：目标数据库'
+              description: '可选：目标数据库',
             },
             table_name: {
               type: 'string',
-              description: '可选：目标表'
+              description: '可选：目标表',
             },
             include_details: {
               type: 'boolean',
               description: '是否包含详细数据',
-              default: true
-            }
+              default: true,
+            },
           },
-          required: []
-        }
+          required: [],
+        },
       },
       {
         name: 'import_expert_analysis',
@@ -741,11 +867,11 @@ class StarRocksExpertCoordinator {
             include_details: {
               type: 'boolean',
               description: '是否包含详细分析数据',
-              default: true
-            }
+              default: true,
+            },
           },
-          required: []
-        }
+          required: [],
+        },
       },
       {
         name: 'get_available_experts',
@@ -753,9 +879,9 @@ class StarRocksExpertCoordinator {
         inputSchema: {
           type: 'object',
           properties: {},
-          required: []
-        }
-      }
+          required: [],
+        },
+      },
     );
 
     console.error(`✅ 总共注册了 ${allTools.length} 个 MCP 工具`);
