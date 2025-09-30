@@ -170,6 +170,18 @@ export class LoopDetectionService {
   }
 
   private checkToolCallLoop(toolCall: { name: string; args: object }): boolean {
+    // Temporarily disable loop detection for Alibaba provider (qwen models) and DeepSeek
+    // as the tool response handling is not fully compatible
+    const modelName = this.config.getModel();
+    if (modelName && (
+      modelName.includes('qwen') ||
+      modelName.startsWith('alibaba:') ||
+      modelName.includes('deepseek') ||
+      modelName.startsWith('deepseek:')
+    )) {
+      return false;
+    }
+
     const key = this.getToolCallKey(toolCall);
     if (this.lastToolCallKey === key) {
       this.toolCallRepetitionCount++;

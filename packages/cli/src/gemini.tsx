@@ -207,6 +207,12 @@ export async function main() {
   await cleanupCheckpoints();
 
   const argv = await parseArguments(settings.merged);
+  // Handle --list-models command early
+  if (argv.listModels) {
+    const { handleListModels } = await import('./commands/models.js');
+    handleListModels();
+    process.exit(0);
+  }
 
   // Check for invalid input combinations early to prevent crashes
   if (argv.promptInteractive && !process.stdin.isTTY) {

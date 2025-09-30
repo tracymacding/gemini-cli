@@ -45,6 +45,7 @@ import { appEvents } from '../utils/events.js';
 
 import { isWorkspaceTrusted } from './trustedFolders.js';
 import { createPolicyEngineConfig } from './policy.js';
+import { getModelSelection } from '../commands/models.js';
 
 // Simple console logger for now - replace with actual logger if available
 const logger = {
@@ -58,6 +59,8 @@ const logger = {
 
 export interface CliArgs {
   model: string | undefined;
+  provider: string | undefined;
+  listModels: boolean | undefined;
   sandbox: boolean | string | undefined;
   sandboxImage: string | undefined;
   debug: boolean | undefined;
@@ -170,7 +173,16 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
         .option('model', {
           alias: 'm',
           type: 'string',
-          description: `Model`,
+          description: 'Model name to use (e.g., gemini-2.5-pro, qwen-plus, deepseek:deepseek-chat)',
+        })
+        .option('provider', {
+          type: 'string',
+          description: 'Model provider (google, anthropic, alibaba, deepseek)',
+          choices: ['google', 'alibaba', 'deepseek'],
+        })
+        .option('list-models', {
+          type: 'boolean',
+          description: 'List all available models and exit',
         })
         .option('prompt', {
           alias: 'p',
@@ -326,6 +338,40 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
   if (settings?.experimental?.extensionManagement ?? true) {
     yargsInstance.command(extensionsCommand);
   }
+
+  // Register authentication commands
+  yargsInstance.command(
+    'auth <action>',
+    'Manage authentication for different providers',
+    (yargs) =>
+      yargs
+        .positional('action', {
+          describe: 'Authentication action to perform',
+          type: 'string',
+          choices: [
+            'status',
+            'login-google',
+            'login-alibaba',
+            'logout-alibaba',
+            'status-alibaba',
+            'deepseek',
+            'status-deepseek'
+          ],
+        })
+        .example([
+          ['$0 auth status', 'Show overall authentication status'],
+          ['$0 auth login-google', 'Login with Google OAuth'],
+          ['$0 auth login-alibaba', 'Setup Alibaba DashScope API key'],
+          ['$0 auth logout-alibaba', 'Clear Alibaba configuration'],
+          ['$0 auth status-alibaba', 'Check Alibaba authentication status'],
+          ['$0 auth deepseek', 'Setup and check DeepSeek API key'],
+          ['$0 auth status-deepseek', 'Check DeepSeek authentication status'],
+        ]),
+    async (argv: any) => {
+      const { authCommand } = await import('../commands/auth.js');
+      await authCommand(argv.action);
+    }
+  );
 
   yargsInstance
     .version(await getCliVersion()) // This will enable the --version flag based on package.json
@@ -591,11 +637,21 @@ export async function loadCliConfig(
   const defaultModel = useModelRouter
     ? DEFAULT_GEMINI_MODEL_AUTO
     : DEFAULT_GEMINI_MODEL;
-  const resolvedModel: string =
-    argv.model ||
-    process.env['GEMINI_MODEL'] ||
-    settings.model?.name ||
-    defaultModel;
+
+  // Use new multi-provider model selection if model or provider specified
+  let resolvedModel: string;
+  if (argv.model || argv.provider) {
+    resolvedModel = getModelSelection({
+      model: argv.model,
+      provider: argv.provider,
+    });
+  } else {
+    // Fallback to legacy model resolution
+    resolvedModel =
+      process.env['GEMINI_MODEL'] ||
+      settings.model?.name ||
+      defaultModel;
+  }
 
   const sandboxConfig = await loadSandboxConfig(settings, argv);
   const screenReader =

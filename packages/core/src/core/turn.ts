@@ -333,10 +333,16 @@ export class Turn {
   private handlePendingFunctionCall(
     fnCall: FunctionCall,
   ): ServerGeminiStreamEvent | null {
+    // Try to infer tool name from context if missing
+    let resolvedName = fnCall.name;
+    if (!resolvedName) {
+      resolvedName = this.inferToolNameFromContext(fnCall.args);
+    }
+
     const callId =
       fnCall.id ??
-      `${fnCall.name}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const name = fnCall.name || 'undefined_tool_name';
+      `${resolvedName}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const name = resolvedName || 'undefined_tool_name';
     const args = (fnCall.args || {}) as Record<string, unknown>;
 
     const toolCallRequest: ToolCallRequestInfo = {
@@ -355,6 +361,34 @@ export class Turn {
 
   getDebugResponses(): GenerateContentResponse[] {
     return this.debugResponses;
+  }
+
+  /**
+   * Attempt to infer the tool name from arguments and conversation context
+   */
+  private inferToolNameFromContext(args: unknown): string | undefined {
+    if (!args || typeof args !== 'object') {
+      return undefined;
+    }
+
+    const argsObj = args as Record<string, unknown>;
+
+    // Check for compaction-related queries
+    if (argsObj['limit'] !== undefined || argsObj['min_compaction_score'] !== undefined) {
+      return 'get_high_compaction_partitions';
+    }
+
+    // Check for table-specific compaction score queries
+    if (argsObj['table_name'] !== undefined) {
+      return 'get_table_partitions_compaction_score';
+    }
+
+    // Check for analysis queries
+    if (argsObj['min_score'] !== undefined) {
+      return 'analyze_high_compaction_score';
+    }
+
+    return undefined;
   }
 }
 

@@ -7,6 +7,28 @@
 // Export config
 export * from './config/config.js';
 export * from './output/types.js';
+
+// Export providers (excluding conflicting exports)
+export type {
+  ModelProvider,
+  ModelInfo,
+  ModelCapabilities,
+  ModelPricing,
+  ProviderConfig,
+  LLMClient,
+  GenerateRequest,
+  GenerateResponse,
+  GenerateStreamChunk,
+  Message,
+  MessageContent,
+  Tool,
+  TokenUsage,
+} from './providers/base.js';
+export type { ToolCall as ProviderToolCall } from './providers/base.js';
+export * from './providers/google.js';
+export * from './providers/alibaba.js';
+export * from './providers/deepseek.js';
+export * from './providers/registry.js';
 export * from './output/json-formatter.js';
 export * from './policy/types.js';
 export * from './policy/policy-engine.js';

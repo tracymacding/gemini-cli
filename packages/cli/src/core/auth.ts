@@ -8,6 +8,7 @@ import {
   type AuthType,
   type Config,
   getErrorMessage,
+  AuthType as AuthTypeEnum,
 } from '@google/gemini-cli-core';
 
 /**
@@ -24,8 +25,14 @@ export async function performInitialAuth(
     return null;
   }
 
+  // Check if we're using a multi-provider model format (provider:model)
+  const modelName = config.getModel();
+  const isMultiProvider = modelName?.includes(':');
+  const effectiveAuthType = isMultiProvider ? AuthTypeEnum.MULTI_PROVIDER : authType;
+
+
   try {
-    await config.refreshAuth(authType);
+    await config.refreshAuth(effectiveAuthType);
     // The console.log is intentionally left out here.
     // We can add a dedicated startup message later if needed.
   } catch (e) {

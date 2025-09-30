@@ -11,7 +11,8 @@ export function validateAuthMethod(authMethod: string): string | null {
   loadEnvironment(loadSettings().merged);
   if (
     authMethod === AuthType.LOGIN_WITH_GOOGLE ||
-    authMethod === AuthType.CLOUD_SHELL
+    authMethod === AuthType.CLOUD_SHELL ||
+    authMethod === AuthType.MULTI_PROVIDER
   ) {
     return null;
   }
@@ -22,6 +23,7 @@ export function validateAuthMethod(authMethod: string): string | null {
     }
     return null;
   }
+
 
   if (authMethod === AuthType.USE_VERTEX_AI) {
     const hasVertexProjectLocationConfig =
