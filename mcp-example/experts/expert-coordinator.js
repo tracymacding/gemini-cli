@@ -15,6 +15,9 @@ import { StarRocksStorageExpert } from './storage-expert.js';
 import { StarRocksCompactionExpert } from './compaction-expert-integrated.js';
 import { StarRocksImportExpert } from './import-expert.js';
 import { StarRocksCacheExpert } from './cache-expert.js';
+import { StarRocksTransactionExpert } from './transaction-expert.js';
+import { StarRocksLogExpert } from './log-expert.js';
+import { StarRocksMemoryExpert } from './memory-expert.js';
 
 class StarRocksExpertCoordinator {
   constructor() {
@@ -23,6 +26,9 @@ class StarRocksExpertCoordinator {
       compaction: new StarRocksCompactionExpert(),
       import: new StarRocksImportExpert(),
       cache: new StarRocksCacheExpert(),
+      transaction: new StarRocksTransactionExpert(),
+      log: new StarRocksLogExpert(),
+      memory: new StarRocksMemoryExpert(),
     };
 
     // 工具处理器映射表: toolName -> {expert, handler}
