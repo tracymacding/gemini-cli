@@ -22,7 +22,11 @@ function getAuthTypeFromEnv(modelName?: string): AuthType | undefined {
   // Check if we're using a multi-provider model (provider:model format)
   if (modelName?.includes(':')) {
     const [provider] = modelName.split(':');
-    if (provider === 'alibaba' || provider === 'deepseek' || provider === 'anthropic') {
+    if (
+      provider === 'alibaba' ||
+      provider === 'deepseek' ||
+      provider === 'anthropic'
+    ) {
       return AuthType.MULTI_PROVIDER;
     }
   }
@@ -41,23 +45,36 @@ export async function validateNonInteractiveAuth(
 ) {
   try {
     const enforcedType = settings.merged.security?.auth?.enforcedType;
+
+    // Check if we're using a multi-provider model format (provider:model) FIRST
+    // Multi-provider mode should OVERRIDE any configured auth type (including selectedType)
+    const configModelName = nonInteractiveConfig.getModel();
+    const isMultiProvider = configModelName?.includes(':');
+
+    // If multi-provider mode is detected, use it immediately and ignore other auth settings
+    if (isMultiProvider) {
+      const authType = AuthType.MULTI_PROVIDER;
+      if (!useExternalAuth) {
+        const err = validateAuthMethod(String(authType));
+        if (err != null) {
+          throw new Error(err);
+        }
+      }
+      await nonInteractiveConfig.refreshAuth(authType);
+      return nonInteractiveConfig;
+    }
+
+    // Only check enforcedType if not in multi-provider mode
     if (enforcedType) {
-      const currentAuthType = getAuthTypeFromEnv();
+      const currentAuthType = getAuthTypeFromEnv(configModelName);
       if (currentAuthType !== enforcedType) {
         const message = `The configured auth type is ${enforcedType}, but the current auth type is ${currentAuthType}. Please re-authenticate with the correct type.`;
         throw new Error(message);
       }
     }
 
-    let effectiveAuthType =
-      enforcedType || getAuthTypeFromEnv() || configuredAuthType;
-
-    // Check if we're using a multi-provider model format (provider:model)
-    const configModelName = nonInteractiveConfig.getModel();
-    const isMultiProvider = configModelName?.includes(':');
-    if (isMultiProvider) {
-      effectiveAuthType = AuthType.MULTI_PROVIDER;
-    }
+    const effectiveAuthType =
+      enforcedType || getAuthTypeFromEnv(configModelName) || configuredAuthType;
 
     if (!effectiveAuthType) {
       const message = `Please set an Auth method in your ${USER_SETTINGS_PATH} or specify one of the following environment variables before running: GEMINI_API_KEY, GOOGLE_GENAI_USE_VERTEXAI, GOOGLE_GENAI_USE_GCA`;

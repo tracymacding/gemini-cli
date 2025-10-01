@@ -276,11 +276,17 @@ export async function main() {
         argv,
       );
 
+      // Check if using multi-provider model format (provider:model)
+      const modelName = partialConfig.getModel();
+      const isMultiProvider = modelName?.includes(':');
+
       if (
+        !isMultiProvider &&
         settings.merged.security?.auth?.selectedType &&
         !settings.merged.security?.auth?.useExternal
       ) {
         // Validate authentication here because the sandbox will interfere with the Oauth2 web redirect.
+        // Skip this check if using multi-provider mode
         try {
           const err = validateAuthMethod(
             settings.merged.security.auth.selectedType,
@@ -381,12 +387,18 @@ export async function main() {
 
     const initializationResult = await initializeApp(config, settings);
 
+    // Check if using multi-provider model format to skip OAuth check
+    const modelName = config.getModel();
+    const isMultiProvider = modelName?.includes(':');
+
     if (
+      !isMultiProvider &&
       settings.merged.security?.auth?.selectedType ===
         AuthType.LOGIN_WITH_GOOGLE &&
       config.isBrowserLaunchSuppressed()
     ) {
       // Do oauth before app renders to make copying the link possible.
+      // Skip this if using multi-provider mode
       await getOauthClient(settings.merged.security.auth.selectedType, config);
     }
 
