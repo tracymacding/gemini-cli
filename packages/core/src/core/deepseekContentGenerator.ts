@@ -4,8 +4,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { CountTokensResponse, GenerateContentResponse, EmbedContentResponse } from '@google/genai';
-import type { GenerateContentParameters, CountTokensParameters, EmbedContentParameters } from '@google/genai';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+import {
+  GenerateContentResponse
+} from '@google/genai';
+import type {
+  GenerateContentParameters,
+  CountTokensParameters,
+  EmbedContentParameters,
+
+  CountTokensResponse,
+  EmbedContentResponse} from '@google/genai';
 import type { ContentGenerator } from './contentGenerator.js';
 
 export interface DeepSeekConfig {
@@ -19,11 +29,15 @@ export interface DeepSeekConfig {
  */
 export class DeepSeekContentGenerator implements ContentGenerator {
   private config: DeepSeekConfig;
-  private toolCallAccumulator: Map<string, {
-    id?: string;
-    name?: string;
-    arguments: string;
-  }> = new Map();
+  private toolCallAccumulator: Map<
+    string,
+    {
+      id?: string;
+      name?: string;
+      arguments: string;
+    }
+  > = new Map();
+  private toolCallIdMap: Map<string, string> = new Map();
   private apiUrl: string;
 
   constructor(config: DeepSeekConfig) {
@@ -31,12 +45,13 @@ export class DeepSeekContentGenerator implements ContentGenerator {
       baseURL: 'https://api.deepseek.com/v1/chat/completions',
       ...config,
     };
-    this.apiUrl = this.config.baseURL || 'https://api.deepseek.com/v1/chat/completions';
+    this.apiUrl =
+      this.config.baseURL || 'https://api.deepseek.com/v1/chat/completions';
   }
 
   async generateContent(
     request: GenerateContentParameters,
-    userPromptId: string,
+    _userPromptId: string,
   ): Promise<GenerateContentResponse> {
     const requestBody = this.convertToDeepSeekRequest(request);
 
@@ -44,7 +59,7 @@ export class DeepSeekContentGenerator implements ContentGenerator {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.config.apiKey}`,
+        Authorization: `Bearer ${this.config.apiKey}`,
       },
       body: JSON.stringify(requestBody),
     });
@@ -60,7 +75,7 @@ export class DeepSeekContentGenerator implements ContentGenerator {
 
   async generateContentStream(
     request: GenerateContentParameters,
-    userPromptId: string,
+    _userPromptId: string,
   ): Promise<AsyncGenerator<GenerateContentResponse>> {
     const requestBody = {
       ...this.convertToDeepSeekRequest(request),
@@ -71,8 +86,8 @@ export class DeepSeekContentGenerator implements ContentGenerator {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.config.apiKey}`,
-        'Accept': 'text/event-stream',
+        Authorization: `Bearer ${this.config.apiKey}`,
+        Accept: 'text/event-stream',
       },
       body: JSON.stringify(requestBody),
     });
@@ -80,14 +95,21 @@ export class DeepSeekContentGenerator implements ContentGenerator {
     if (!response.ok) {
       const errorText = await response.text();
       // Log the actual request that failed
-      console.error('[DeepSeek ERROR] Request messages:', JSON.stringify(requestBody.messages, null, 2));
-      throw new Error(`DeepSeek Streaming API Error: ${response.status} ${errorText}`);
+      console.error(
+        '[DeepSeek ERROR] Request messages:',
+        JSON.stringify(requestBody.messages, null, 2),
+      );
+      throw new Error(
+        `DeepSeek Streaming API Error: ${response.status} ${errorText}`,
+      );
     }
 
     return this.parseSSEStream(response);
   }
 
-  private async *parseSSEStream(response: Response): AsyncGenerator<GenerateContentResponse> {
+  private async *parseSSEStream(
+    response: Response,
+  ): AsyncGenerator<GenerateContentResponse> {
     if (!response.body) {
       throw new Error('Response body is null');
     }
@@ -125,7 +147,12 @@ export class DeepSeekContentGenerator implements ContentGenerator {
                 yield geminiResponse;
               }
             } catch (parseError) {
-              console.error('Failed to parse SSE data:', parseError, 'Data:', dataStr);
+              console.error(
+                'Failed to parse SSE data:',
+                parseError,
+                'Data:',
+                dataStr,
+              );
               continue;
             }
           }
@@ -136,7 +163,9 @@ export class DeepSeekContentGenerator implements ContentGenerator {
     }
   }
 
-  async countTokens(request: CountTokensParameters): Promise<CountTokensResponse> {
+  async countTokens(
+    request: CountTokensParameters,
+  ): Promise<CountTokensResponse> {
     // DeepSeek doesn't have a dedicated token counting API
     // We'll estimate based on content length
     const content = this.extractTextFromRequest(request);
@@ -147,27 +176,41 @@ export class DeepSeekContentGenerator implements ContentGenerator {
     };
   }
 
-  async embedContent(request: EmbedContentParameters): Promise<EmbedContentResponse> {
+  async embedContent(
+    _request: EmbedContentParameters,
+  ): Promise<EmbedContentResponse> {
     throw new Error('Embedding is not supported by DeepSeek provider');
   }
 
   private convertToDeepSeekRequest(request: GenerateContentParameters): any {
-    const messages: Array<{ role: string; content: any; tool_calls?: any; tool_call_id?: string }> = [];
+    const messages: Array<{
+      role: string;
+      content: any;
+      tool_calls?: any;
+      tool_call_id?: string;
+    }> = [];
 
     // Convert system instruction
     if (request.config?.systemInstruction) {
-      const systemContent = this.extractTextFromPart(request.config.systemInstruction);
+      const systemContent = this.extractTextFromPart(
+        request.config.systemInstruction,
+      );
       if (systemContent) {
         messages.push({ role: 'system', content: systemContent });
       }
     }
 
     // Convert contents
-    const contentsArray = Array.isArray(request.contents) ? request.contents : [request.contents];
+    const contentsArray = Array.isArray(request.contents)
+      ? request.contents
+      : [request.contents];
 
     // Debug logging
     if (process.env['DEBUG']) {
-      console.error('[DeepSeek] Converting contents:', JSON.stringify(contentsArray, null, 2));
+      console.error(
+        '[DeepSeek] Converting contents:',
+        JSON.stringify(contentsArray, null, 2),
+      );
     }
 
     for (const content of contentsArray) {
@@ -175,11 +218,16 @@ export class DeepSeekContentGenerator implements ContentGenerator {
       if (Array.isArray(content)) {
         for (const part of content) {
           if (part.functionResponse) {
-            const toolCallId = part.functionResponse.id || `call_${part.functionResponse.name}`;
+            // Prioritize ID from response, then from map, then fallback
+            const functionName = part.functionResponse.name || '';
+            const toolCallId: string =
+              part.functionResponse.id ||
+              this.toolCallIdMap.get(functionName) ||
+              `call_${functionName}`;
             messages.push({
               role: 'tool',
               tool_call_id: toolCallId,
-              content: JSON.stringify(part.functionResponse.response)
+              content: JSON.stringify(part.functionResponse.response),
             });
           }
         }
@@ -196,27 +244,41 @@ export class DeepSeekContentGenerator implements ContentGenerator {
           } else if (part.functionCall) {
             // Convert function call to DeepSeek format
             // Use the actual ID if available (from history), otherwise generate one
-            const toolCallId = part.functionCall.id || `call_${part.functionCall.name}_${Math.random().toString(36).substr(2, 9)}`;
+            const toolCallId =
+              part.functionCall.id ||
+              `call_${part.functionCall.name}_${Math.random().toString(36).substr(2, 9)}`;
+
+            // Save the ID for later use when processing functionResponse
+            if (part.functionCall.name) {
+              this.toolCallIdMap.set(part.functionCall.name, toolCallId);
+            }
+
             messages.push({
               role: 'assistant',
               content: null,
-              tool_calls: [{
-                id: toolCallId,
-                type: 'function',
-                function: {
-                  name: part.functionCall.name,
-                  arguments: JSON.stringify(part.functionCall.args || {})
-                }
-              }]
+              tool_calls: [
+                {
+                  id: toolCallId,
+                  type: 'function',
+                  function: {
+                    name: part.functionCall.name,
+                    arguments: JSON.stringify(part.functionCall.args || {}),
+                  },
+                },
+              ],
             });
           } else if (part.functionResponse) {
             // Convert function response to DeepSeek format
-            // Use the actual tool_call_id if available, otherwise fall back to name-based ID
-            const toolCallId = part.functionResponse.id || `call_${part.functionResponse.name}`;
+            // Prioritize ID from response, then from map, then fallback
+            const functionName = part.functionResponse.name || '';
+            const toolCallId: string =
+              part.functionResponse.id ||
+              this.toolCallIdMap.get(functionName) ||
+              `call_${functionName}`;
             messages.push({
               role: 'tool',
               tool_call_id: toolCallId,
-              content: JSON.stringify(part.functionResponse.response)
+              content: JSON.stringify(part.functionResponse.response),
             });
           }
         }
@@ -239,15 +301,18 @@ export class DeepSeekContentGenerator implements ContentGenerator {
 
     // Debug logging
     if (process.env['DEBUG']) {
-      console.error('[DeepSeek] Final messages:', JSON.stringify(messages, null, 2));
+      console.error(
+        '[DeepSeek] Final messages:',
+        JSON.stringify(messages, null, 2),
+      );
     }
 
     // Add tools if present
     if (request.config?.tools && request.config.tools.length > 0) {
-      const tools = request.config.tools.flatMap((tool: any) => {
-        return (
+      const tools = request.config.tools.flatMap((tool: any) => (
           tool.functionDeclarations?.map((func: any) => {
-            const parameters = func.parameters ?? func.parametersJsonSchema ?? { type: 'object', properties: {} };
+            const parameters = func.parameters ??
+              func.parametersJsonSchema ?? { type: 'object', properties: {} };
             return {
               type: 'function',
               function: {
@@ -257,8 +322,7 @@ export class DeepSeekContentGenerator implements ContentGenerator {
               },
             };
           }) ?? []
-        );
-      });
+        ));
 
       if (tools.length > 0) {
         requestBody.tools = tools;
@@ -276,7 +340,7 @@ export class DeepSeekContentGenerator implements ContentGenerator {
 
     const response = new GenerateContentResponse();
     const message = choice.message;
-    const parts: Array<any> = [];
+    const parts: any[] = [];
 
     // Handle text content
     if (message.content) {
@@ -290,8 +354,10 @@ export class DeepSeekContentGenerator implements ContentGenerator {
           functionCall: {
             id: toolCall.id,
             name: toolCall.function?.name,
-            args: toolCall.function?.arguments ? JSON.parse(toolCall.function.arguments) : {}
-          }
+            args: toolCall.function?.arguments
+              ? JSON.parse(toolCall.function.arguments)
+              : {},
+          },
         });
       }
     }
@@ -322,7 +388,9 @@ export class DeepSeekContentGenerator implements ContentGenerator {
     return response;
   }
 
-  private convertStreamChunkToGemini(data: any): GenerateContentResponse | null {
+  private convertStreamChunkToGemini(
+    data: any,
+  ): GenerateContentResponse | null {
     const choice = data.choices?.[0];
     if (!choice || !choice.delta) {
       return null;
@@ -330,7 +398,7 @@ export class DeepSeekContentGenerator implements ContentGenerator {
 
     const response = new GenerateContentResponse();
     const delta = choice.delta;
-    const parts: Array<any> = [];
+    const parts: any[] = [];
 
     // Handle text content
     if (delta.content) {
@@ -347,7 +415,7 @@ export class DeepSeekContentGenerator implements ContentGenerator {
           this.toolCallAccumulator.set(toolCallId, {
             id: undefined,
             name: undefined,
-            arguments: ''
+            arguments: '',
           });
         }
 
@@ -376,12 +444,12 @@ export class DeepSeekContentGenerator implements ContentGenerator {
               functionCall: {
                 id: accumulator.id,
                 name: accumulator.name,
-                args: parsedArgs
-              }
+                args: parsedArgs,
+              },
             });
             // Clear the accumulator after successful parsing
             this.toolCallAccumulator.delete(toolCallId);
-          } catch (parseError) {
+          } catch (_parseError) {
             // Arguments are not complete yet, continue accumulating
             // Don't add to parts yet
           }
@@ -397,11 +465,13 @@ export class DeepSeekContentGenerator implements ContentGenerator {
       {
         content: {
           parts: parts.length > 0 ? parts : [{ text: '' }],
-          role: 'model'
+          role: 'model',
         },
-        finishReason: choice.finish_reason ? this.mapFinishReason(choice.finish_reason) : undefined,
+        finishReason: choice.finish_reason
+          ? this.mapFinishReason(choice.finish_reason)
+          : undefined,
         index: 0,
-      }
+      },
     ];
 
     // Add usage metadata if available
@@ -425,7 +495,10 @@ export class DeepSeekContentGenerator implements ContentGenerator {
         return part.text;
       }
       if (part.parts) {
-        return part.parts.map((p: any) => this.extractTextFromPart(p)).filter(Boolean).join('\n');
+        return part.parts
+          .map((p: any) => this.extractTextFromPart(p))
+          .filter(Boolean)
+          .join('\n');
       }
     }
     return '';
@@ -441,7 +514,11 @@ export class DeepSeekContentGenerator implements ContentGenerator {
     if (request.contents) {
       for (const content of request.contents) {
         if (content.parts) {
-          text += content.parts.map((part: any) => this.extractTextFromPart(part)).filter(Boolean).join('\n') + '\n';
+          text +=
+            content.parts
+              .map((part: any) => this.extractTextFromPart(part))
+              .filter(Boolean)
+              .join('\n') + '\n';
         }
       }
     }
@@ -454,12 +531,17 @@ export class DeepSeekContentGenerator implements ContentGenerator {
       return [{ text: ' ' }]; // Minimal valid part
     }
 
-    const validParts = parts.filter(part => {
+    const validParts = parts.filter((part) => {
       if (!part || Object.keys(part).length === 0) {
         return false;
       }
       // Remove parts with empty text (but keep functionCall and functionResponse)
-      if (part.text !== undefined && part.text === '' && !part.functionCall && !part.functionResponse) {
+      if (
+        part.text !== undefined &&
+        part.text === '' &&
+        !part.functionCall &&
+        !part.functionResponse
+      ) {
         return false;
       }
       return true;

@@ -18,6 +18,8 @@ import { StarRocksCacheExpert } from './cache-expert.js';
 import { StarRocksTransactionExpert } from './transaction-expert.js';
 import { StarRocksLogExpert } from './log-expert.js';
 import { StarRocksMemoryExpert } from './memory-expert.js';
+import { StarRocksQueryPerfExpert } from './query-perf-expert.js';
+import { StarRocksOperateExpert } from './operate-expert.js';
 
 class StarRocksExpertCoordinator {
   constructor() {
@@ -29,6 +31,8 @@ class StarRocksExpertCoordinator {
       transaction: new StarRocksTransactionExpert(),
       log: new StarRocksLogExpert(),
       memory: new StarRocksMemoryExpert(),
+      'query-perf': new StarRocksQueryPerfExpert(),
+      operate: new StarRocksOperateExpert(),
     };
 
     // 工具处理器映射表: toolName -> {expert, handler}
