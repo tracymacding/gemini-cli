@@ -1,12 +1,17 @@
 /**
+ * @license
+ * Copyright 2025 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
  * StarRocks Compaction 专家模块 - 完整集成版
  * 集成了MCP server中所有Compaction相关的现有功能
  */
 
-import {
-  ErrorCode,
-  McpError,
-} from '@modelcontextprotocol/sdk/types.js';
+/* eslint-disable no-undef, @typescript-eslint/no-unused-vars */
+
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 
 class StarRocksCompactionExpert {
   constructor() {
@@ -17,47 +22,48 @@ class StarRocksCompactionExpert {
     this.rules = {
       // Compaction Score 分级规则
       compaction_score: {
-        excellent: 10,      // CS < 10 优秀
-        normal: 50,         // CS < 50 正常
-        warning: 100,       // CS >= 100 警告
-        critical: 500,      // CS >= 500 严重
-        emergency: 1000     // CS >= 1000 紧急
+        excellent: 10, // CS < 10 优秀
+        normal: 50, // CS < 50 正常
+        warning: 100, // CS >= 100 警告
+        critical: 500, // CS >= 500 严重
+        emergency: 1000, // CS >= 1000 紧急
       },
 
       // 线程配置规则
       thread_config: {
-        min_threads_per_core: 0.25,     // 最少线程数/CPU核心
-        max_threads_per_core: 0.5,      // 最多线程数/CPU核心
-        absolute_min_threads: 4,        // 绝对最小线程数
-        absolute_max_threads: 64,       // 绝对最大线程数
-        recommended_base: 8             // 推荐基础线程数
+        min_threads_per_core: 0.25, // 最少线程数/CPU核心
+        max_threads_per_core: 0.5, // 最多线程数/CPU核心
+        absolute_min_threads: 4, // 绝对最小线程数
+        absolute_max_threads: 64, // 绝对最大线程数
+        recommended_base: 8, // 推荐基础线程数
       },
 
       // 任务执行规则
       task_execution: {
-        max_healthy_tasks_per_node: 8,  // 单节点健康任务数上限
-        task_timeout_hours: 4,          // 任务超时时间（小时）
-        slow_task_threshold_hours: 2,   // 慢任务阈值（小时）
-        max_retry_count: 5,             // 最大重试次数
-        healthy_success_rate: 90        // 健康成功率阈值(%)
+        max_healthy_tasks_per_node: 8, // 单节点健康任务数上限
+        task_timeout_hours: 4, // 任务超时时间（小时）
+        slow_task_threshold_hours: 2, // 慢任务阈值（小时）
+        max_retry_count: 5, // 最大重试次数
+        healthy_success_rate: 90, // 健康成功率阈值(%)
       },
 
       // FE配置规则
       fe_config: {
-        lake_compaction_disabled: 0,    // 禁用值
-        lake_compaction_adaptive: -1,   // 自适应值
-        min_recommended_max_tasks: 64,  // 最小推荐最大任务数
-        adaptive_multiplier: 16         // 自适应模式下的倍数（节点数*16）
-      }
+        lake_compaction_disabled: 0, // 禁用值
+        lake_compaction_adaptive: -1, // 自适应值
+        min_recommended_max_tasks: 64, // 最小推荐最大任务数
+        adaptive_multiplier: 16, // 自适应模式下的倍数（节点数*16）
+      },
     };
 
     // 专业术语解释
     this.terminology = {
-      compaction_score: 'Compaction Score (CS) - 衡量数据文件碎片化程度，分数越高碎片越严重',
+      compaction_score:
+        'Compaction Score (CS) - 衡量数据文件碎片化程度，分数越高碎片越严重',
       base_compaction: '基础压缩 - 将多个小文件合并成大文件',
       cumulative_compaction: '累积压缩 - 合并增量数据到基础文件',
       lake_compaction_max_tasks: 'FE参数，控制集群最大并发Compaction任务数',
-      compact_threads: 'BE参数，控制单个BE节点的Compaction线程数'
+      compact_threads: 'BE参数，控制单个BE节点的Compaction线程数',
     };
   }
 
@@ -69,7 +75,7 @@ class StarRocksCompactionExpert {
       includeDetailedData = false,
       targetDatabase = null,
       targetTable = null,
-      analysisScope = 'full' // 'full', 'quick', 'deep'
+      analysisScope = 'full', // 'full', 'quick', 'deep'
     } = options;
 
     try {
@@ -80,17 +86,26 @@ class StarRocksCompactionExpert {
       const compactionData = await this.collectAllCompactionData(connection, {
         targetDatabase,
         targetTable,
-        includeDetailedData
+        includeDetailedData,
       });
 
       // 2. 执行多维度专业诊断
-      const diagnosis = await this.performMultiDimensionalDiagnosis(compactionData, analysisScope);
+      const diagnosis = await this.performMultiDimensionalDiagnosis(
+        compactionData,
+        analysisScope,
+      );
 
       // 3. 生成专业优化建议
-      const recommendations = this.generateComprehensiveRecommendations(diagnosis, compactionData);
+      const recommendations = this.generateComprehensiveRecommendations(
+        diagnosis,
+        compactionData,
+      );
 
       // 4. 计算Compaction系统健康分数
-      const healthAssessment = this.calculateCompactionHealth(diagnosis, compactionData);
+      const healthAssessment = this.calculateCompactionHealth(
+        diagnosis,
+        compactionData,
+      );
 
       // 5. 生成可执行的操作计划
       const actionPlans = this.generateActionPlans(diagnosis, recommendations);
@@ -118,13 +133,15 @@ class StarRocksCompactionExpert {
 
         // 专家洞察
         expert_insights: this.generateExpertInsights(compactionData, diagnosis),
-        optimization_opportunities: this.identifyOptimizationOpportunities(compactionData, diagnosis)
+        optimization_opportunities: this.identifyOptimizationOpportunities(
+          compactionData,
+          diagnosis,
+        ),
       };
-
     } catch (error) {
       throw new McpError(
         ErrorCode.InternalError,
-        `Compaction专家分析失败: ${error.message}`
+        `Compaction专家分析失败: ${error.message}`,
       );
     }
   }
@@ -134,7 +151,7 @@ class StarRocksCompactionExpert {
    */
   async collectAllCompactionData(connection, options) {
     const data = {
-      collection_timestamp: new Date().toISOString()
+      collection_timestamp: new Date().toISOString(),
     };
 
     console.error('📊 收集Compaction相关数据...');
@@ -197,7 +214,7 @@ class StarRocksCompactionExpert {
 
       const [rows] = await connection.query(query);
 
-      data.high_cs_partitions = rows.map(row => ({
+      data.high_cs_partitions = rows.map((row) => ({
         database: row.DB_NAME,
         table: row.TABLE_NAME,
         partition: row.PARTITION_NAME,
@@ -208,14 +225,13 @@ class StarRocksCompactionExpert {
         data_size: row.DATA_SIZE,
         storage_size: row.STORAGE_SIZE,
         buckets: row.BUCKETS,
-        severity: this.categorizeCSScore(row.MAX_CS)
+        severity: this.categorizeCSScore(row.MAX_CS),
       }));
 
       // 统计CS分布
       data.cs_statistics = this.analyzeCSDistribution(data.high_cs_partitions);
 
       console.error(`   → 收集到${data.high_cs_partitions.length}个高CS分区`);
-
     } catch (error) {
       console.warn('收集高CS分区信息失败:', error.message);
       data.high_cs_partitions = [];
@@ -232,20 +248,23 @@ class StarRocksCompactionExpert {
         SELECT * FROM information_schema.be_configs WHERE name = 'compact_threads';
       `);
 
-      data.thread_configuration = rows.map(row => ({
+      data.thread_configuration = rows.map((row) => ({
         node_id: row.BE_ID,
         node_name: row.NAME || 'compact_threads',
         current_threads: parseInt(row.VALUE) || 0,
         default_threads: parseInt(row.DEFAULT) || 4,
         is_mutable: row.MUTABLE === 1,
-        description: row.DESCRIPTION || 'Compaction thread count'
+        description: row.DESCRIPTION || 'Compaction thread count',
       }));
 
       // 计算线程统计信息
-      data.thread_statistics = this.calculateThreadStatistics(data.thread_configuration);
+      data.thread_statistics = this.calculateThreadStatistics(
+        data.thread_configuration,
+      );
 
-      console.error(`   → 收集到${data.thread_configuration.length}个节点的线程配置`);
-
+      console.error(
+        `   → 收集到${data.thread_configuration.length}个节点的线程配置`,
+      );
     } catch (error) {
       console.warn('收集线程配置失败:', error.message);
       data.thread_configuration = [];
@@ -267,7 +286,7 @@ class StarRocksCompactionExpert {
       `);
 
       const now = new Date();
-      data.running_tasks = rows.map(row => ({
+      data.running_tasks = rows.map((row) => ({
         be_id: row.BE_ID,
         txn_id: row.TXN_ID,
         tablet_id: row.TABLET_ID,
@@ -277,19 +296,28 @@ class StarRocksCompactionExpert {
         status: row.STATUS,
         retry_count: row.RUNS || 0,
         skipped: row.SKIPPED || false,
-        duration_hours: row.START_TIME ? (now - new Date(row.START_TIME)) / (1000 * 60 * 60) : 0,
-        is_slow: row.START_TIME ? (now - new Date(row.START_TIME)) / (1000 * 60 * 60) > this.rules.task_execution.slow_task_threshold_hours : false,
-        is_stalled: (row.PROGRESS || 0) < 50 && (row.RUNS || 0) > this.rules.task_execution.max_retry_count
+        duration_hours: row.START_TIME
+          ? (now - new Date(row.START_TIME)) / (1000 * 60 * 60)
+          : 0,
+        is_slow: row.START_TIME
+          ? (now - new Date(row.START_TIME)) / (1000 * 60 * 60) >
+            this.rules.task_execution.slow_task_threshold_hours
+          : false,
+        is_stalled:
+          (row.PROGRESS || 0) < 50 &&
+          (row.RUNS || 0) > this.rules.task_execution.max_retry_count,
       }));
 
       // 按BE节点分组任务
       data.tasks_by_be = this.groupTasksByBE(data.running_tasks);
 
       // 任务执行统计
-      data.task_execution_stats = this.calculateTaskExecutionStats(data.running_tasks, data.tasks_by_be);
+      data.task_execution_stats = this.calculateTaskExecutionStats(
+        data.running_tasks,
+        data.tasks_by_be,
+      );
 
       console.error(`   → 收集到${data.running_tasks.length}个正在运行的任务`);
-
     } catch (error) {
       console.warn('收集运行任务失败:', error.message);
       data.running_tasks = [];
@@ -313,9 +341,14 @@ class StarRocksCompactionExpert {
           const maxTasks = parseInt(feRows[0].Value) || 0;
           data.fe_configuration = {
             lake_compaction_max_tasks: maxTasks,
-            mode: maxTasks === -1 ? 'ADAPTIVE' : maxTasks === 0 ? 'DISABLED' : 'FIXED',
+            mode:
+              maxTasks === -1
+                ? 'ADAPTIVE'
+                : maxTasks === 0
+                  ? 'DISABLED'
+                  : 'FIXED',
             is_adaptive: maxTasks === -1,
-            is_disabled: maxTasks === 0
+            is_disabled: maxTasks === 0,
           };
         } else {
           throw new Error('lake_compaction_max_tasks not found');
@@ -327,12 +360,11 @@ class StarRocksCompactionExpert {
           mode: 'UNKNOWN',
           is_adaptive: false,
           is_disabled: false,
-          error: feError.message
+          error: feError.message,
         };
       }
 
       console.error('   → 收集FE配置完成');
-
     } catch (error) {
       console.warn('收集FE配置失败:', error.message);
       data.fe_configuration = this.getDefaultFEConfig();
@@ -346,27 +378,34 @@ class StarRocksCompactionExpert {
     try {
       const [rows] = await connection.query('SHOW BACKENDS;');
 
-      data.be_nodes = rows.map(row => ({
+      data.be_nodes = rows.map((row) => ({
         backend_id: row.BackendId,
         ip: row.IP,
         is_alive: row.Alive === 'true',
         cpu_cores: parseInt(row.CpuCores) || 1,
         mem_used_pct: parseFloat(row.MemUsedPct?.replace('%', '')) || 0,
         disk_used_pct: parseFloat(row.MaxDiskUsedPct?.replace('%', '')) || 0,
-        last_heartbeat: row.LastHeartbeat
+        last_heartbeat: row.LastHeartbeat,
       }));
 
       // 计算集群统计信息
       data.cluster_stats = {
         total_nodes: data.be_nodes.length,
-        alive_nodes: data.be_nodes.filter(be => be.is_alive).length,
-        total_cpu_cores: data.be_nodes.reduce((sum, be) => sum + be.cpu_cores, 0),
-        avg_cpu_cores: data.be_nodes.length > 0 ?
-          Math.round(data.be_nodes.reduce((sum, be) => sum + be.cpu_cores, 0) / data.be_nodes.length) : 0
+        alive_nodes: data.be_nodes.filter((be) => be.is_alive).length,
+        total_cpu_cores: data.be_nodes.reduce(
+          (sum, be) => sum + be.cpu_cores,
+          0,
+        ),
+        avg_cpu_cores:
+          data.be_nodes.length > 0
+            ? Math.round(
+                data.be_nodes.reduce((sum, be) => sum + be.cpu_cores, 0) /
+                  data.be_nodes.length,
+              )
+            : 0,
       };
 
       console.error(`   → 收集到${data.be_nodes.length}个BE节点信息`);
-
     } catch (error) {
       console.warn('收集BE节点信息失败:', error.message);
       data.be_nodes = [];
@@ -388,9 +427,12 @@ class StarRocksCompactionExpert {
         LIMIT 100;
       `);
 
-      data.recent_completed_tasks = rows.map(row => {
-        const duration = row.START_TIME && row.FINISH_TIME ?
-          (new Date(row.FINISH_TIME) - new Date(row.START_TIME)) / (1000 * 60 * 60) : 0;
+      data.recent_completed_tasks = rows.map((row) => {
+        const duration =
+          row.START_TIME && row.FINISH_TIME
+            ? (new Date(row.FINISH_TIME) - new Date(row.START_TIME)) /
+              (1000 * 60 * 60)
+            : 0;
 
         return {
           be_id: row.BE_ID,
@@ -402,15 +444,18 @@ class StarRocksCompactionExpert {
           status: row.STATUS,
           retry_count: row.RUNS || 0,
           duration_hours: duration,
-          is_successful: (row.PROGRESS || 0) >= 100 && row.STATUS !== 'FAILED'
+          is_successful: (row.PROGRESS || 0) >= 100 && row.STATUS !== 'FAILED',
         };
       });
 
       // 计算成功率和平均执行时间
-      data.historical_performance = this.calculateHistoricalPerformance(data.recent_completed_tasks);
+      data.historical_performance = this.calculateHistoricalPerformance(
+        data.recent_completed_tasks,
+      );
 
-      console.error(`   → 收集到${data.recent_completed_tasks.length}个历史任务`);
-
+      console.error(
+        `   → 收集到${data.recent_completed_tasks.length}个历史任务`,
+      );
     } catch (error) {
       console.warn('收集历史任务失败:', error.message);
       data.recent_completed_tasks = [];
@@ -438,7 +483,7 @@ class StarRocksCompactionExpert {
         database: targetDatabase,
         table: targetTable,
         total_partitions: rows.length,
-        partitions: rows.map(row => ({
+        partitions: rows.map((row) => ({
           partition: row.PARTITION_NAME,
           max_cs: row.MAX_CS,
           avg_cs: row.AVG_CS,
@@ -448,14 +493,17 @@ class StarRocksCompactionExpert {
           storage_size: row.STORAGE_SIZE,
           buckets: row.BUCKETS,
           replication_num: row.REPLICATION_NUM,
-          severity: this.categorizeCSScore(row.MAX_CS)
+          severity: this.categorizeCSScore(row.MAX_CS),
         })),
-        cs_distribution: this.analyzeCSDistribution(rows.map(row => ({ max_cs: row.MAX_CS }))),
-        optimization_priority: this.calculateTableOptimizationPriority(rows)
+        cs_distribution: this.analyzeCSDistribution(
+          rows.map((row) => ({ max_cs: row.MAX_CS })),
+        ),
+        optimization_priority: this.calculateTableOptimizationPriority(rows),
       };
 
-      console.error(`   → 收集到表 ${targetDatabase}.${targetTable} 的${rows.length}个分区`);
-
+      console.error(
+        `   → 收集到表 ${targetDatabase}.${targetTable} 的${rows.length}个分区`,
+      );
     } catch (error) {
       console.warn('收集表特定数据失败:', error.message);
       data.target_table_analysis = null;
@@ -472,7 +520,7 @@ class StarRocksCompactionExpert {
       criticals: [],
       warnings: [],
       issues: [],
-      insights: []
+      insights: [],
     };
 
     // 1. CS分数诊断
@@ -508,10 +556,15 @@ class StarRocksCompactionExpert {
     this.performCrossDimensionalAnalysis(compactionData, diagnosis);
 
     // 计算诊断统计
-    diagnosis.total_issues = diagnosis.criticals.length + diagnosis.warnings.length + diagnosis.issues.length;
+    diagnosis.total_issues =
+      diagnosis.criticals.length +
+      diagnosis.warnings.length +
+      diagnosis.issues.length;
     diagnosis.summary = this.generateDiagnosisSummary(diagnosis);
 
-    console.error(`✅ 诊断完成: ${diagnosis.criticals.length}个严重问题, ${diagnosis.warnings.length}个警告`);
+    console.error(
+      `✅ 诊断完成: ${diagnosis.criticals.length}个严重问题, ${diagnosis.warnings.length}个警告`,
+    );
 
     return diagnosis;
   }
@@ -524,32 +577,37 @@ class StarRocksCompactionExpert {
     const csStats = data.cs_statistics || {};
 
     // 紧急CS问题
-    const emergencyPartitions = highCSPartitions.filter(p => p.max_cs >= this.rules.compaction_score.emergency);
+    const emergencyPartitions = highCSPartitions.filter(
+      (p) => p.max_cs >= this.rules.compaction_score.emergency,
+    );
     if (emergencyPartitions.length > 0) {
       diagnosis.criticals.push({
         type: 'emergency_compaction_score',
         severity: 'CRITICAL',
         priority: 'IMMEDIATE',
         message: `发现 ${emergencyPartitions.length} 个紧急高CS分区 (CS ≥ 1000)`,
-        affected_partitions: emergencyPartitions.slice(0, 10).map(p => ({
+        affected_partitions: emergencyPartitions.slice(0, 10).map((p) => ({
           partition: `${p.database}.${p.table}.${p.partition}`,
           cs: p.max_cs,
           data_size: p.data_size,
-          row_count: p.row_count
+          row_count: p.row_count,
         })),
         impact: {
           performance: '严重影响查询性能，可能导致查询超时',
           storage: '存储空间利用率低，碎片化严重',
-          business: '直接影响用户体验和业务连续性'
+          business: '直接影响用户体验和业务连续性',
         },
         urgency_reason: 'CS超过1000表示数据碎片化极其严重，必须立即处理',
-        estimated_impact_scope: emergencyPartitions.length > 10 ? 'CLUSTER_WIDE' : 'LOCALIZED'
+        estimated_impact_scope:
+          emergencyPartitions.length > 10 ? 'CLUSTER_WIDE' : 'LOCALIZED',
       });
     }
 
     // 严重CS问题
-    const criticalPartitions = highCSPartitions.filter(p =>
-      p.max_cs >= this.rules.compaction_score.critical && p.max_cs < this.rules.compaction_score.emergency
+    const criticalPartitions = highCSPartitions.filter(
+      (p) =>
+        p.max_cs >= this.rules.compaction_score.critical &&
+        p.max_cs < this.rules.compaction_score.emergency,
     );
     if (criticalPartitions.length > 0) {
       diagnosis.criticals.push({
@@ -558,20 +616,22 @@ class StarRocksCompactionExpert {
         priority: 'HIGH',
         message: `发现 ${criticalPartitions.length} 个严重高CS分区 (500 ≤ CS < 1000)`,
         affected_count: criticalPartitions.length,
-        max_cs_in_group: Math.max(...criticalPartitions.map(p => p.max_cs)),
+        max_cs_in_group: Math.max(...criticalPartitions.map((p) => p.max_cs)),
         impact: {
           performance: '显著影响查询性能',
           storage: '存储效率低下',
-          resource: '占用过多系统资源'
+          resource: '占用过多系统资源',
         },
         recommended_batch_size: Math.min(5, criticalPartitions.length),
-        processing_strategy: 'batch_compaction_with_monitoring'
+        processing_strategy: 'batch_compaction_with_monitoring',
       });
     }
 
     // 警告级CS问题
-    const warningPartitions = highCSPartitions.filter(p =>
-      p.max_cs >= this.rules.compaction_score.warning && p.max_cs < this.rules.compaction_score.critical
+    const warningPartitions = highCSPartitions.filter(
+      (p) =>
+        p.max_cs >= this.rules.compaction_score.warning &&
+        p.max_cs < this.rules.compaction_score.critical,
     );
     if (warningPartitions.length > 0) {
       diagnosis.warnings.push({
@@ -581,7 +641,7 @@ class StarRocksCompactionExpert {
         message: `发现 ${warningPartitions.length} 个警告级高CS分区 (100 ≤ CS < 500)`,
         affected_count: warningPartitions.length,
         trend_analysis: this.analyzeCSGrowthTrend(warningPartitions),
-        prevention_focus: true
+        prevention_focus: true,
       });
     }
 
@@ -592,10 +652,17 @@ class StarRocksCompactionExpert {
         message: 'Compaction Score 分布分析',
         statistics: csStats,
         health_indicators: {
-          excellent_ratio: ((csStats.excellent_partitions || 0) / csStats.total_partitions * 100).toFixed(1),
-          problematic_ratio: ((csStats.critical_partitions + csStats.emergency_partitions) / csStats.total_partitions * 100).toFixed(1)
+          excellent_ratio: (
+            ((csStats.excellent_partitions || 0) / csStats.total_partitions) *
+            100
+          ).toFixed(1),
+          problematic_ratio: (
+            ((csStats.critical_partitions + csStats.emergency_partitions) /
+              csStats.total_partitions) *
+            100
+          ).toFixed(1),
         },
-        recommendations: this.generateCSDistributionRecommendations(csStats)
+        recommendations: this.generateCSDistributionRecommendations(csStats),
       });
     }
   }
@@ -614,24 +681,27 @@ class StarRocksCompactionExpert {
         severity: 'WARNING',
         message: '无法获取Compaction线程配置信息',
         impact: '无法评估线程配置合理性',
-        suggestions: ['检查数据库连接权限', '确认StarRocks版本支持线程配置查询']
+        suggestions: [
+          '检查数据库连接权限',
+          '确认StarRocks版本支持线程配置查询',
+        ],
       });
       return;
     }
 
     // 分析每个节点的线程配置
-    threadConfig.forEach(config => {
-      const beNode = beNodes.find(be => be.backend_id == config.node_id);
+    threadConfig.forEach((config) => {
+      const beNode = beNodes.find((be) => be.backend_id == config.node_id);
       const cpuCores = beNode ? beNode.cpu_cores : 4; // 默认4核
 
       const minRecommended = Math.max(
         this.rules.thread_config.absolute_min_threads,
-        Math.ceil(cpuCores * this.rules.thread_config.min_threads_per_core)
+        Math.ceil(cpuCores * this.rules.thread_config.min_threads_per_core),
       );
 
       const maxRecommended = Math.min(
         this.rules.thread_config.absolute_max_threads,
-        Math.ceil(cpuCores * this.rules.thread_config.max_threads_per_core)
+        Math.ceil(cpuCores * this.rules.thread_config.max_threads_per_core),
       );
 
       const currentThreads = config.current_threads;
@@ -639,8 +709,14 @@ class StarRocksCompactionExpert {
 
       // 线程数过低
       if (currentThreads < minRecommended) {
-        const severity = currentThreads < this.rules.thread_config.recommended_base ? 'CRITICAL' : 'WARNING';
-        (severity === 'CRITICAL' ? diagnosis.criticals : diagnosis.warnings).push({
+        const severity =
+          currentThreads < this.rules.thread_config.recommended_base
+            ? 'CRITICAL'
+            : 'WARNING';
+        (severity === 'CRITICAL'
+          ? diagnosis.criticals
+          : diagnosis.warnings
+        ).push({
           type: 'low_compaction_threads',
           node_id: config.node_id,
           node_ip: nodeIP,
@@ -650,17 +726,22 @@ class StarRocksCompactionExpert {
           current_config: {
             threads: currentThreads,
             cpu_cores: cpuCores,
-            threads_per_core: (currentThreads / cpuCores).toFixed(2)
+            threads_per_core: (currentThreads / cpuCores).toFixed(2),
           },
           recommendations: {
             min_threads: minRecommended,
             optimal_threads: Math.ceil(cpuCores * 0.375), // 中间值
-            max_threads: maxRecommended
+            max_threads: maxRecommended,
           },
-          impact: severity === 'CRITICAL' ?
-            'Compaction处理能力严重不足，CS积累加速' :
-            'Compaction效率偏低，可能导致CS增长',
-          adjustment_command: this.generateThreadAdjustmentCommand(config.node_id, nodeIP, minRecommended)
+          impact:
+            severity === 'CRITICAL'
+              ? 'Compaction处理能力严重不足，CS积累加速'
+              : 'Compaction效率偏低，可能导致CS增长',
+          adjustment_command: this.generateThreadAdjustmentCommand(
+            config.node_id,
+            nodeIP,
+            minRecommended,
+          ),
         });
       }
 
@@ -676,11 +757,11 @@ class StarRocksCompactionExpert {
           current_config: {
             threads: currentThreads,
             cpu_cores: cpuCores,
-            threads_per_core: (currentThreads / cpuCores).toFixed(2)
+            threads_per_core: (currentThreads / cpuCores).toFixed(2),
           },
           impact: '可能过度消耗CPU资源，影响其他操作',
           risk_assessment: 'MEDIUM',
-          suggested_adjustment: maxRecommended
+          suggested_adjustment: maxRecommended,
         });
       }
     });
@@ -694,14 +775,17 @@ class StarRocksCompactionExpert {
           total_threads: threadStats.total_threads,
           average_threads_per_node: threadStats.avg_threads_per_node,
           threads_per_core_ratio: threadStats.avg_threads_per_core,
-          thread_utilization: this.calculateThreadUtilization(data)
+          thread_utilization: this.calculateThreadUtilization(data),
         },
-        optimization_potential: this.assessThreadOptimizationPotential(threadStats, data.cluster_stats),
+        optimization_potential: this.assessThreadOptimizationPotential(
+          threadStats,
+          data.cluster_stats,
+        ),
         best_practices: [
           '线程数应根据CPU核心数动态配置',
           '监控线程使用率避免资源浪费',
-          '定期评估线程配置与工作负载的匹配度'
-        ]
+          '定期评估线程配置与工作负载的匹配度',
+        ],
       });
     }
   }
@@ -715,55 +799,58 @@ class StarRocksCompactionExpert {
     const historicalPerf = data.historical_performance || {};
 
     // 检查停滞任务
-    const stalledTasks = runningTasks.filter(task => task.is_stalled);
+    const stalledTasks = runningTasks.filter((task) => task.is_stalled);
     if (stalledTasks.length > 0) {
       diagnosis.criticals.push({
         type: 'stalled_compaction_tasks',
         severity: 'CRITICAL',
         priority: 'IMMEDIATE',
         message: `发现 ${stalledTasks.length} 个停滞的Compaction任务`,
-        stalled_tasks: stalledTasks.map(task => ({
+        stalled_tasks: stalledTasks.map((task) => ({
           be_id: task.be_id,
           tablet_id: task.tablet_id,
           progress: task.progress,
           retry_count: task.retry_count,
           duration_hours: task.duration_hours.toFixed(1),
-          status: task.status
+          status: task.status,
         })),
         impact: '停滞任务阻塞Compaction队列，影响整体效率',
         root_cause_analysis: [
           '检查BE节点资源使用情况',
           '验证磁盘IO性能',
           '检查网络连接稳定性',
-          '查看BE日志中的错误信息'
+          '查看BE日志中的错误信息',
         ],
-        recovery_actions: this.generateStalledTaskRecoveryActions(stalledTasks)
+        recovery_actions: this.generateStalledTaskRecoveryActions(stalledTasks),
       });
     }
 
     // 检查长时间运行任务
-    const slowTasks = runningTasks.filter(task => task.is_slow && !task.is_stalled);
+    const slowTasks = runningTasks.filter(
+      (task) => task.is_slow && !task.is_stalled,
+    );
     if (slowTasks.length > 0) {
       diagnosis.warnings.push({
         type: 'slow_compaction_tasks',
         severity: 'WARNING',
         priority: 'MEDIUM',
         message: `发现 ${slowTasks.length} 个长时间运行的任务`,
-        slow_tasks: slowTasks.slice(0, 5).map(task => ({
+        slow_tasks: slowTasks.slice(0, 5).map((task) => ({
           be_id: task.be_id,
           tablet_id: task.tablet_id,
           duration_hours: task.duration_hours.toFixed(1),
-          progress: task.progress
+          progress: task.progress,
         })),
         impact: '可能表示系统负载过高或数据复杂度高',
-        monitoring_suggestion: '建议持续监控这些任务的进度'
+        monitoring_suggestion: '建议持续监控这些任务的进度',
       });
     }
 
     // 检查单节点任务过载
     const tasksByBE = data.tasks_by_be || {};
-    const overloadedNodes = Object.entries(tasksByBE).filter(([beId, tasks]) =>
-      tasks.length > this.rules.task_execution.max_healthy_tasks_per_node
+    const overloadedNodes = Object.entries(tasksByBE).filter(
+      ([beId, tasks]) =>
+        tasks.length > this.rules.task_execution.max_healthy_tasks_per_node,
     );
 
     if (overloadedNodes.length > 0) {
@@ -775,10 +862,10 @@ class StarRocksCompactionExpert {
         overloaded_nodes: overloadedNodes.map(([beId, tasks]) => ({
           be_id: beId,
           task_count: tasks.length,
-          max_recommended: this.rules.task_execution.max_healthy_tasks_per_node
+          max_recommended: this.rules.task_execution.max_healthy_tasks_per_node,
         })),
         impact: '可能导致任务执行缓慢和资源竞争',
-        load_balancing_needed: true
+        load_balancing_needed: true,
       });
     }
 
@@ -795,15 +882,15 @@ class StarRocksCompactionExpert {
             total_tasks: historicalPerf.total_tasks,
             successful_tasks: historicalPerf.successful_tasks,
             success_rate: successRate,
-            avg_duration_hours: historicalPerf.avg_duration_hours
+            avg_duration_hours: historicalPerf.avg_duration_hours,
           },
           impact: '频繁的任务失败可能导致CS持续积累',
           investigation_areas: [
             '检查磁盘空间是否充足',
             '验证网络连接稳定性',
             '分析BE节点性能指标',
-            '查看错误日志模式'
-          ]
+            '查看错误日志模式',
+          ],
         });
       }
     }
@@ -816,14 +903,17 @@ class StarRocksCompactionExpert {
         current_load: {
           running_tasks: runningTasks.length,
           tasks_per_node: taskStats.avg_tasks_per_node,
-          cluster_utilization: this.calculateClusterTaskUtilization(data)
+          cluster_utilization: this.calculateClusterTaskUtilization(data),
         },
         performance_trends: {
           success_rate: historicalPerf.success_rate,
           avg_duration: historicalPerf.avg_duration_hours,
-          efficiency_rating: this.calculateTaskEfficiencyRating(historicalPerf)
+          efficiency_rating: this.calculateTaskEfficiencyRating(historicalPerf),
         },
-        optimization_suggestions: this.generateTaskOptimizationSuggestions(taskStats, historicalPerf)
+        optimization_suggestions: this.generateTaskOptimizationSuggestions(
+          taskStats,
+          historicalPerf,
+        ),
       });
     }
   }
@@ -847,15 +937,16 @@ class StarRocksCompactionExpert {
         suggestions: [
           '检查是否有ADMIN权限',
           '确认StarRocks版本支持该配置项',
-          '手动检查FE配置文件'
-        ]
+          '手动检查FE配置文件',
+        ],
       });
       return;
     }
 
     const maxTasks = feConfig.lake_compaction_max_tasks;
     const totalNodes = clusterStats.alive_nodes || 1;
-    const highCSPartitions = csStats.critical_partitions + csStats.emergency_partitions || 0;
+    const highCSPartitions =
+      csStats.critical_partitions + csStats.emergency_partitions || 0;
 
     // Compaction被禁用
     if (feConfig.is_disabled) {
@@ -866,17 +957,22 @@ class StarRocksCompactionExpert {
         message: 'Compaction功能已被禁用 (lake_compaction_max_tasks = 0)',
         impact: {
           immediate: 'CS将持续增长，无法自动压缩',
-          long_term: '存储效率严重下降，查询性能恶化'
+          long_term: '存储效率严重下降，查询性能恶化',
         },
         business_risk: 'HIGH',
-        recommended_value: Math.max(totalNodes * this.rules.fe_config.adaptive_multiplier, this.rules.fe_config.min_recommended_max_tasks),
-        enable_command: 'ADMIN SET FRONTEND CONFIG ("lake_compaction_max_tasks" = "-1");' // 建议使用自适应模式
+        recommended_value: Math.max(
+          totalNodes * this.rules.fe_config.adaptive_multiplier,
+          this.rules.fe_config.min_recommended_max_tasks,
+        ),
+        enable_command:
+          'ADMIN SET FRONTEND CONFIG ("lake_compaction_max_tasks" = "-1");', // 建议使用自适应模式
       });
     }
 
     // 自适应模式评估
     else if (feConfig.is_adaptive) {
-      const adaptiveMaxTasks = totalNodes * this.rules.fe_config.adaptive_multiplier;
+      const adaptiveMaxTasks =
+        totalNodes * this.rules.fe_config.adaptive_multiplier;
 
       diagnosis.insights.push({
         type: 'adaptive_compaction_config',
@@ -884,36 +980,41 @@ class StarRocksCompactionExpert {
         current_config: {
           mode: 'ADAPTIVE',
           calculated_max_tasks: adaptiveMaxTasks,
-          node_count: totalNodes
+          node_count: totalNodes,
         },
-        effectiveness_assessment: this.assessAdaptiveModeEffectiveness(adaptiveMaxTasks, highCSPartitions),
-        pros: [
-          '自动根据集群规模调整',
-          '适应集群扩缩容',
-          '减少手动配置维护'
-        ],
+        effectiveness_assessment: this.assessAdaptiveModeEffectiveness(
+          adaptiveMaxTasks,
+          highCSPartitions,
+        ),
+        pros: ['自动根据集群规模调整', '适应集群扩缩容', '减少手动配置维护'],
         cons: [
           '可能不适应特定工作负载',
           '无法精细化控制',
-          '突发负载时可能不够灵活'
+          '突发负载时可能不够灵活',
         ],
-        recommendation: highCSPartitions > adaptiveMaxTasks / 2 ?
-          'CONSIDER_FIXED_VALUE' : 'KEEP_ADAPTIVE'
+        recommendation:
+          highCSPartitions > adaptiveMaxTasks / 2
+            ? 'CONSIDER_FIXED_VALUE'
+            : 'KEEP_ADAPTIVE',
       });
     }
 
     // 固定值模式评估
     else {
       const recommendedMinTasks = Math.max(
-        totalNodes * 8,  // 每个节点至少8个任务
-        highCSPartitions / 10,  // 高CS分区数的1/10
-        this.rules.fe_config.min_recommended_max_tasks
+        totalNodes * 8, // 每个节点至少8个任务
+        highCSPartitions / 10, // 高CS分区数的1/10
+        this.rules.fe_config.min_recommended_max_tasks,
       );
 
       if (maxTasks < recommendedMinTasks) {
-        const severity = maxTasks < recommendedMinTasks / 2 ? 'CRITICAL' : 'WARNING';
+        const severity =
+          maxTasks < recommendedMinTasks / 2 ? 'CRITICAL' : 'WARNING';
 
-        (severity === 'CRITICAL' ? diagnosis.criticals : diagnosis.warnings).push({
+        (severity === 'CRITICAL'
+          ? diagnosis.criticals
+          : diagnosis.warnings
+        ).push({
           type: 'low_max_compaction_tasks',
           severity: severity,
           priority: severity === 'CRITICAL' ? 'HIGH' : 'MEDIUM',
@@ -921,20 +1022,19 @@ class StarRocksCompactionExpert {
           current_vs_recommended: {
             current: maxTasks,
             recommended_min: recommendedMinTasks,
-            gap_ratio: (recommendedMinTasks / maxTasks).toFixed(1)
+            gap_ratio: (recommendedMinTasks / maxTasks).toFixed(1),
           },
-          impact: severity === 'CRITICAL' ?
-            'Compaction处理能力严重不足，CS快速积累' :
-            'Compaction处理能力有限，可能无法及时处理高CS分区',
+          impact:
+            severity === 'CRITICAL'
+              ? 'Compaction处理能力严重不足，CS快速积累'
+              : 'Compaction处理能力有限，可能无法及时处理高CS分区',
           tuning_suggestion: {
             immediate_value: Math.min(recommendedMinTasks, maxTasks * 2), // 先翻倍，避免激进调整
             target_value: recommendedMinTasks,
-            adjustment_command: `ADMIN SET FRONTEND CONFIG ("lake_compaction_max_tasks" = "${recommendedMinTasks}");`
-          }
+            adjustment_command: `ADMIN SET FRONTEND CONFIG ("lake_compaction_max_tasks" = "${recommendedMinTasks}");`,
+          },
         });
-      }
-
-      else if (maxTasks > recommendedMinTasks * 3) {
+      } else if (maxTasks > recommendedMinTasks * 3) {
         diagnosis.warnings.push({
           type: 'high_max_compaction_tasks',
           severity: 'WARNING',
@@ -943,7 +1043,7 @@ class StarRocksCompactionExpert {
           impact: '可能过度占用系统资源',
           resource_risk: 'MEDIUM',
           optimization_opportunity: true,
-          suggested_value: Math.ceil(recommendedMinTasks * 1.5)
+          suggested_value: Math.ceil(recommendedMinTasks * 1.5),
         });
       }
     }
@@ -958,16 +1058,26 @@ class StarRocksCompactionExpert {
     const threadConfig = data.thread_configuration || [];
     const csStats = data.cs_statistics || {};
 
-    const aliveNodes = beNodes.filter(be => be.is_alive).length;
+    const aliveNodes = beNodes.filter((be) => be.is_alive).length;
     const totalRunningTasks = runningTasks.length;
-    const totalThreads = threadConfig.reduce((sum, config) => sum + config.current_threads, 0);
+    const totalThreads = threadConfig.reduce(
+      (sum, config) => sum + config.current_threads,
+      0,
+    );
 
     // 计算系统压力指标
     const pressureMetrics = {
       tasks_per_node: aliveNodes > 0 ? totalRunningTasks / aliveNodes : 0,
-      thread_utilization: totalThreads > 0 ? totalRunningTasks / totalThreads : 0,
-      high_cs_density: (csStats.critical_partitions + csStats.emergency_partitions) / Math.max(aliveNodes, 1),
-      cluster_load_level: this.calculateClusterLoadLevel(totalRunningTasks, aliveNodes, csStats)
+      thread_utilization:
+        totalThreads > 0 ? totalRunningTasks / totalThreads : 0,
+      high_cs_density:
+        (csStats.critical_partitions + csStats.emergency_partitions) /
+        Math.max(aliveNodes, 1),
+      cluster_load_level: this.calculateClusterLoadLevel(
+        totalRunningTasks,
+        aliveNodes,
+        csStats,
+      ),
     };
 
     // 高系统压力诊断
@@ -980,24 +1090,23 @@ class StarRocksCompactionExpert {
         pressure_indicators: {
           tasks_per_node: pressureMetrics.tasks_per_node.toFixed(1),
           thread_utilization: `${(pressureMetrics.thread_utilization * 100).toFixed(1)}%`,
-          high_cs_partitions: csStats.critical_partitions + csStats.emergency_partitions,
-          load_level: pressureMetrics.cluster_load_level
+          high_cs_partitions:
+            csStats.critical_partitions + csStats.emergency_partitions,
+          load_level: pressureMetrics.cluster_load_level,
         },
         impact: {
           performance: '系统响应能力下降',
           stability: '可能导致任务积压和系统不稳定',
-          business: '影响数据实时性和查询性能'
+          business: '影响数据实时性和查询性能',
         },
         immediate_actions: [
           '暂停非关键数据导入',
           '手动清理最高CS分区',
           '考虑增加处理线程',
-          '监控系统资源使用'
-        ]
+          '监控系统资源使用',
+        ],
       });
-    }
-
-    else if (pressureMetrics.cluster_load_level === 'MEDIUM') {
+    } else if (pressureMetrics.cluster_load_level === 'MEDIUM') {
       diagnosis.warnings.push({
         type: 'elevated_compaction_pressure',
         severity: 'WARNING',
@@ -1007,8 +1116,8 @@ class StarRocksCompactionExpert {
         monitoring_focus: [
           '密切关注CS增长趋势',
           '监控任务执行效率',
-          '评估是否需要扩容'
-        ]
+          '评估是否需要扩容',
+        ],
       });
     }
 
@@ -1021,9 +1130,15 @@ class StarRocksCompactionExpert {
         current_capacity: totalThreads,
         current_utilization: `${(pressureMetrics.thread_utilization * 100).toFixed(1)}%`,
         bottleneck_analysis: this.identifyCompactionBottlenecks(data),
-        scaling_recommendation: this.generateScalingRecommendation(pressureMetrics, data)
+        scaling_recommendation: this.generateScalingRecommendation(
+          pressureMetrics,
+          data,
+        ),
       },
-      efficiency_score: this.calculateCompactionEfficiencyScore(pressureMetrics, data)
+      efficiency_score: this.calculateCompactionEfficiencyScore(
+        pressureMetrics,
+        data,
+      ),
     });
   }
 
@@ -1039,8 +1154,8 @@ class StarRocksCompactionExpert {
       notes: [
         '建议在低峰期执行配置变更',
         '变更后监控系统资源使用情况',
-        '根据实际效果进行微调'
-      ]
+        '根据实际效果进行微调',
+      ],
     };
   }
 
@@ -1053,23 +1168,33 @@ class StarRocksCompactionExpert {
     const recommendations = [];
 
     // 处理严重问题的建议
-    diagnosis.criticals.forEach(critical => {
-      const recommendation = this.createCriticalIssueRecommendation(critical, compactionData);
+    diagnosis.criticals.forEach((critical) => {
+      const recommendation = this.createCriticalIssueRecommendation(
+        critical,
+        compactionData,
+      );
       if (recommendation) recommendations.push(recommendation);
     });
 
     // 处理警告问题的建议
-    diagnosis.warnings.forEach(warning => {
-      const recommendation = this.createWarningIssueRecommendation(warning, compactionData);
+    diagnosis.warnings.forEach((warning) => {
+      const recommendation = this.createWarningIssueRecommendation(
+        warning,
+        compactionData,
+      );
       if (recommendation) recommendations.push(recommendation);
     });
 
     // 添加预防性和优化性建议
-    recommendations.push(...this.generatePreventiveRecommendations(compactionData, diagnosis));
+    recommendations.push(
+      ...this.generatePreventiveRecommendations(compactionData, diagnosis),
+    );
 
     return recommendations.sort((a, b) => {
-      const priorityOrder = { 'IMMEDIATE': 4, 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1 };
-      return (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0);
+      const priorityOrder = { IMMEDIATE: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
+      return (
+        (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0)
+      );
     });
   }
 
@@ -1098,18 +1223,21 @@ class StarRocksCompactionExpert {
                   step: 1,
                   action: '识别最高优先级分区',
                   command: `SELECT DB_NAME, TABLE_NAME, PARTITION_NAME, MAX_CS FROM information_schema.partitions_meta WHERE MAX_CS >= 1000 ORDER BY MAX_CS DESC LIMIT 5;`,
-                  purpose: '定位需要立即处理的分区'
+                  purpose: '定位需要立即处理的分区',
                 },
                 {
                   step: 2,
                   action: '执行紧急Compaction',
-                  commands: critical.affected_partitions.slice(0, 3).map(p =>
-                    `ALTER TABLE \`${p.partition.split('.')[0]}\`.\`${p.partition.split('.')[1]}\` COMPACT \`${p.partition.split('.')[2]}\`;`
-                  ),
+                  commands: critical.affected_partitions
+                    .slice(0, 3)
+                    .map(
+                      (p) =>
+                        `ALTER TABLE \`${p.partition.split('.')[0]}\`.\`${p.partition.split('.')[1]}\` COMPACT \`${p.partition.split('.')[2]}\`;`,
+                    ),
                   parallel_execution: false,
-                  monitoring_required: true
-                }
-              ]
+                  monitoring_required: true,
+                },
+              ],
             },
             phase2: {
               name: '批量处理阶段',
@@ -1120,23 +1248,27 @@ class StarRocksCompactionExpert {
                   action: '分批处理剩余分区',
                   batch_size: 3,
                   interval_minutes: 15,
-                  progress_monitoring: true
-                }
-              ]
-            }
+                  progress_monitoring: true,
+                },
+              ],
+            },
           },
 
           monitoring_plan: {
-            immediate_metrics: ['Compaction任务进度', '系统资源使用', 'CS变化趋势'],
+            immediate_metrics: [
+              'Compaction任务进度',
+              '系统资源使用',
+              'CS变化趋势',
+            ],
             success_criteria: 'CS降至500以下',
-            fallback_plan: '如果Compaction效果不佳，考虑手动数据重建'
+            fallback_plan: '如果Compaction效果不佳，考虑手动数据重建',
           },
 
           prevention_measures: [
             '设置CS监控告警阈值为300',
             '建立定期Compaction检查机制',
-            '优化数据导入策略减少小批量写入'
-          ]
+            '优化数据导入策略减少小批量写入',
+          ],
         };
 
       case 'compaction_disabled':
@@ -1149,15 +1281,21 @@ class StarRocksCompactionExpert {
 
           immediate_action: {
             command: critical.enable_command,
-            verification: 'ADMIN SHOW FRONTEND CONFIG LIKE "lake_compaction_max_tasks";',
-            expected_result: '配置值应为-1（自适应）或正整数'
+            verification:
+              'ADMIN SHOW FRONTEND CONFIG LIKE "lake_compaction_max_tasks";',
+            expected_result: '配置值应为-1（自适应）或正整数',
           },
 
           post_enable_monitoring: {
             duration: '24小时',
-            key_metrics: ['新启动的Compaction任务数', 'CS变化趋势', '系统资源使用'],
-            adjustment_threshold: '如果24小时内CS无明显下降，需要调整max_tasks值'
-          }
+            key_metrics: [
+              '新启动的Compaction任务数',
+              'CS变化趋势',
+              '系统资源使用',
+            ],
+            adjustment_threshold:
+              '如果24小时内CS无明显下降，需要调整max_tasks值',
+          },
         };
 
       case 'stalled_compaction_tasks':
@@ -1172,14 +1310,14 @@ class StarRocksCompactionExpert {
           recovery_actions: critical.recovery_actions || [
             '检查BE节点日志获取详细错误信息',
             '验证磁盘空间和权限',
-            '考虑重启相关BE进程（谨慎操作）'
+            '考虑重启相关BE进程（谨慎操作）',
           ],
 
           prevention_strategy: {
             monitoring: '设置任务执行时间监控',
             alerting: '任务进度停滞超过1小时自动告警',
-            maintenance: '定期检查任务队列健康状态'
-          }
+            maintenance: '定期检查任务队列健康状态',
+          },
         };
 
       default:
@@ -1203,15 +1341,15 @@ class StarRocksCompactionExpert {
           implementation: {
             command: warning.adjustment_command.command,
             verification: warning.adjustment_command.verification,
-            rollback_plan: `恢复原配置：${warning.current_config.threads}线程`
+            rollback_plan: `恢复原配置：${warning.current_config.threads}线程`,
           },
 
           monitoring_after_change: {
             duration: '48小时',
             metrics: ['Compaction任务完成速度', 'CPU使用率', '新CS产生速度'],
             success_criteria: 'Compaction处理速度提升20%以上',
-            adjustment_guideline: '根据实际效果进行微调'
-          }
+            adjustment_guideline: '根据实际效果进行微调',
+          },
         };
 
       case 'warning_compaction_score':
@@ -1226,14 +1364,14 @@ class StarRocksCompactionExpert {
             approach: 'SCHEDULED_MAINTENANCE',
             schedule: '低峰期批量处理',
             batch_size: 10,
-            frequency: '每周一次'
+            frequency: '每周一次',
           },
 
           automation_opportunity: {
             description: '可考虑建立自动化Compaction脚本',
             trigger_condition: 'CS > 150',
-            safety_checks: ['系统负载检查', '业务影响评估']
-          }
+            safety_checks: ['系统负载检查', '业务影响评估'],
+          },
         };
 
       default:
@@ -1260,20 +1398,20 @@ class StarRocksCompactionExpert {
           'CS分布统计（按严重级别）',
           '任务执行成功率和平均时间',
           '线程利用率和系统负载',
-          'FE配置参数跟踪'
+          'FE配置参数跟踪',
         ],
         alert_thresholds: {
           cs_emergency: 'CS > 800',
           task_failure_rate: '成功率 < 85%',
-          system_overload: '任务/线程比 > 0.8'
+          system_overload: '任务/线程比 > 0.8',
         },
         dashboard_components: [
           'CS趋势图',
           '任务执行状态',
           '资源利用率',
-          '配置变更历史'
-        ]
-      }
+          '配置变更历史',
+        ],
+      },
     });
 
     // 容量规划建议
@@ -1285,18 +1423,19 @@ class StarRocksCompactionExpert {
       description: '基于当前数据制定长期容量规划策略',
 
       planning_framework: {
-        growth_projection: this.calculateCompactionGrowthProjection(compactionData),
+        growth_projection:
+          this.calculateCompactionGrowthProjection(compactionData),
         scaling_triggers: [
           'CS分区数持续增长超过处理能力',
           '任务队列长度超过健康阈值',
-          '平均任务执行时间持续上升'
+          '平均任务执行时间持续上升',
         ],
         scaling_options: [
           '增加BE节点（水平扩展）',
           '调整线程配置（垂直优化）',
-          '优化FE参数（系统级优化）'
-        ]
-      }
+          '优化FE参数（系统级优化）',
+        ],
+      },
     });
 
     // 最佳实践建议
@@ -1311,25 +1450,25 @@ class StarRocksCompactionExpert {
         daily_operations: [
           '每日检查CS分布情况',
           '监控任务执行状态',
-          '验证系统资源使用'
+          '验证系统资源使用',
         ],
         weekly_maintenance: [
           '分析CS增长趋势',
           '评估配置参数合理性',
-          '审查任务执行效率'
+          '审查任务执行效率',
         ],
         monthly_review: [
           '容量规划评估',
           '配置优化机会识别',
-          '系统性能基准测试'
-        ]
+          '系统性能基准测试',
+        ],
       },
 
       emergency_procedures: {
         high_cs_response: '发现CS > 500时的响应流程',
         system_overload: '系统过载时的负载减轻策略',
-        task_failure_spike: '任务失败率突增时的处理方案'
-      }
+        task_failure_spike: '任务失败率突增时的处理方案',
+      },
     });
 
     return recommendations;
@@ -1342,11 +1481,11 @@ class StarRocksCompactionExpert {
     const actionPlans = [];
 
     // 为每个高优先级建议生成详细执行计划
-    const highPriorityRecs = recommendations.filter(rec =>
-      ['IMMEDIATE', 'HIGH'].includes(rec.priority)
+    const highPriorityRecs = recommendations.filter((rec) =>
+      ['IMMEDIATE', 'HIGH'].includes(rec.priority),
     );
 
-    highPriorityRecs.forEach(rec => {
+    highPriorityRecs.forEach((rec) => {
       actionPlans.push({
         recommendation_id: rec.id,
         plan_name: rec.title,
@@ -1356,7 +1495,7 @@ class StarRocksCompactionExpert {
         execution_steps: this.generateExecutionSteps(rec),
         prerequisites: this.identifyPrerequisites(rec),
         risk_mitigation: this.createRiskMitigation(rec),
-        success_verification: this.defineSuccessVerification(rec)
+        success_verification: this.defineSuccessVerification(rec),
       });
     });
 
@@ -1374,26 +1513,10 @@ class StarRocksCompactionExpert {
 
     // 通用执行步骤模板
     return {
-      preparation: [
-        '备份当前配置',
-        '确认系统状态稳定',
-        '通知相关团队'
-      ],
-      execution: [
-        '按计划执行配置变更',
-        '实时监控系统指标',
-        '记录变更过程'
-      ],
-      verification: [
-        '验证配置生效',
-        '检查目标指标改善',
-        '确认无副作用'
-      ],
-      cleanup: [
-        '清理临时文件',
-        '更新文档记录',
-        '总结经验教训'
-      ]
+      preparation: ['备份当前配置', '确认系统状态稳定', '通知相关团队'],
+      execution: ['按计划执行配置变更', '实时监控系统指标', '记录变更过程'],
+      verification: ['验证配置生效', '检查目标指标改善', '确认无副作用'],
+      cleanup: ['清理临时文件', '更新文档记录', '总结经验教训'],
     };
   }
 
@@ -1404,7 +1527,7 @@ class StarRocksCompactionExpert {
     const commonPrerequisites = [
       '具有ADMIN权限',
       '系统处于稳定状态',
-      '已通知相关业务方'
+      '已通知相关业务方',
     ];
 
     switch (recommendation.category) {
@@ -1413,7 +1536,11 @@ class StarRocksCompactionExpert {
       case 'critical_configuration':
         return [...commonPrerequisites, '备份当前FE配置', '准备回滚方案'];
       case 'performance_tuning':
-        return [...commonPrerequisites, '确认BE节点状态正常', '监控系统基准指标'];
+        return [
+          ...commonPrerequisites,
+          '确认BE节点状态正常',
+          '监控系统基准指标',
+        ];
       default:
         return commonPrerequisites;
     }
@@ -1428,18 +1555,27 @@ class StarRocksCompactionExpert {
       potential_risks: [
         '配置变更可能暂时影响性能',
         'Compaction任务可能短暂增加系统负载',
-        '操作过程中可能出现意外错误'
+        '操作过程中可能出现意外错误',
       ],
       mitigation_measures: [
         '在低峰期执行变更',
         '分阶段逐步调整',
         '准备快速回滚方案',
-        '全程监控关键指标'
+        '全程监控关键指标',
       ],
       rollback_plan: {
-        trigger_conditions: ['系统性能严重下降', '错误率显著上升', '业务投诉增加'],
-        rollback_steps: ['停止当前操作', '恢复原配置', '验证系统恢复', '分析失败原因']
-      }
+        trigger_conditions: [
+          '系统性能严重下降',
+          '错误率显著上升',
+          '业务投诉增加',
+        ],
+        rollback_steps: [
+          '停止当前操作',
+          '恢复原配置',
+          '验证系统恢复',
+          '分析失败原因',
+        ],
+      },
     };
   }
 
@@ -1451,25 +1587,31 @@ class StarRocksCompactionExpert {
       immediate_checks: [
         '配置已正确应用',
         '系统服务正常运行',
-        '无错误日志产生'
+        '无错误日志产生',
       ],
       short_term_validation: {
         timeframe: '1-2小时',
-        metrics: ['目标指标改善', '系统稳定运行', '无性能回退']
+        metrics: ['目标指标改善', '系统稳定运行', '无性能回退'],
       },
       long_term_monitoring: {
         timeframe: '24-48小时',
-        success_criteria: ['持续改善趋势', '无副作用出现', '业务影响为正向']
-      }
+        success_criteria: ['持续改善趋势', '无副作用出现', '业务影响为正向'],
+      },
     };
 
     // 根据建议类型添加特定验证项
     switch (recommendation.category) {
       case 'critical_performance':
-        baseVerification.specific_metrics = ['CS显著下降', 'Compaction任务正常执行'];
+        baseVerification.specific_metrics = [
+          'CS显著下降',
+          'Compaction任务正常执行',
+        ];
         break;
       case 'performance_tuning':
-        baseVerification.specific_metrics = ['任务处理速度提升', 'CPU使用率合理'];
+        baseVerification.specific_metrics = [
+          '任务处理速度提升',
+          'CPU使用率合理',
+        ];
         break;
     }
 
@@ -1499,25 +1641,42 @@ class StarRocksCompactionExpert {
       normal_partitions: 0,
       warning_partitions: 0,
       critical_partitions: 0,
-      emergency_partitions: 0
+      emergency_partitions: 0,
     };
 
-    partitions.forEach(partition => {
+    partitions.forEach((partition) => {
       const cs = partition.max_cs || partition.MAX_CS || 0;
       const category = this.categorizeCSScore(cs);
 
       switch (category) {
-        case 'EXCELLENT': distribution.excellent_partitions++; break;
-        case 'NORMAL': distribution.normal_partitions++; break;
-        case 'WARNING': distribution.warning_partitions++; break;
-        case 'CRITICAL': distribution.critical_partitions++; break;
-        case 'EMERGENCY': distribution.emergency_partitions++; break;
+        case 'EXCELLENT':
+          distribution.excellent_partitions++;
+          break;
+        case 'NORMAL':
+          distribution.normal_partitions++;
+          break;
+        case 'WARNING':
+          distribution.warning_partitions++;
+          break;
+        case 'CRITICAL':
+          distribution.critical_partitions++;
+          break;
+        case 'EMERGENCY':
+          distribution.emergency_partitions++;
+          break;
       }
     });
 
     // 计算统计指标
-    distribution.problematic_ratio = distribution.total_partitions > 0 ?
-      ((distribution.critical_partitions + distribution.emergency_partitions) / distribution.total_partitions * 100).toFixed(1) : 0;
+    distribution.problematic_ratio =
+      distribution.total_partitions > 0
+        ? (
+            ((distribution.critical_partitions +
+              distribution.emergency_partitions) /
+              distribution.total_partitions) *
+            100
+          ).toFixed(1)
+        : 0;
 
     return distribution;
   }
@@ -1528,16 +1687,21 @@ class StarRocksCompactionExpert {
   calculateThreadStatistics(threadConfig) {
     if (threadConfig.length === 0) return this.getEmptyThreadStatistics();
 
-    const totalThreads = threadConfig.reduce((sum, config) => sum + config.current_threads, 0);
+    const totalThreads = threadConfig.reduce(
+      (sum, config) => sum + config.current_threads,
+      0,
+    );
     const avgThreads = totalThreads / threadConfig.length;
 
     return {
       total_nodes: threadConfig.length,
       total_threads: totalThreads,
       avg_threads_per_node: Math.round(avgThreads * 10) / 10,
-      min_threads: Math.min(...threadConfig.map(c => c.current_threads)),
-      max_threads: Math.max(...threadConfig.map(c => c.current_threads)),
-      thread_variance: this.calculateVariance(threadConfig.map(c => c.current_threads))
+      min_threads: Math.min(...threadConfig.map((c) => c.current_threads)),
+      max_threads: Math.max(...threadConfig.map((c) => c.current_threads)),
+      thread_variance: this.calculateVariance(
+        threadConfig.map((c) => c.current_threads),
+      ),
     };
   }
 
@@ -1547,7 +1711,7 @@ class StarRocksCompactionExpert {
   groupTasksByBE(runningTasks) {
     const tasksByBE = {};
 
-    runningTasks.forEach(task => {
+    runningTasks.forEach((task) => {
       if (!tasksByBE[task.be_id]) {
         tasksByBE[task.be_id] = [];
       }
@@ -1561,16 +1725,26 @@ class StarRocksCompactionExpert {
    * 计算任务执行统计
    */
   calculateTaskExecutionStats(runningTasks, tasksByBE) {
-    const nodeTaskCounts = Object.values(tasksByBE).map(tasks => tasks.length);
+    const nodeTaskCounts = Object.values(tasksByBE).map(
+      (tasks) => tasks.length,
+    );
 
     return {
       total_running_tasks: runningTasks.length,
       nodes_with_tasks: Object.keys(tasksByBE).length,
-      avg_tasks_per_node: nodeTaskCounts.length > 0 ?
-        Math.round((nodeTaskCounts.reduce((sum, count) => sum + count, 0) / nodeTaskCounts.length) * 10) / 10 : 0,
-      max_tasks_per_node: nodeTaskCounts.length > 0 ? Math.max(...nodeTaskCounts) : 0,
-      slow_tasks_count: runningTasks.filter(task => task.is_slow).length,
-      stalled_tasks_count: runningTasks.filter(task => task.is_stalled).length
+      avg_tasks_per_node:
+        nodeTaskCounts.length > 0
+          ? Math.round(
+              (nodeTaskCounts.reduce((sum, count) => sum + count, 0) /
+                nodeTaskCounts.length) *
+                10,
+            ) / 10
+          : 0,
+      max_tasks_per_node:
+        nodeTaskCounts.length > 0 ? Math.max(...nodeTaskCounts) : 0,
+      slow_tasks_count: runningTasks.filter((task) => task.is_slow).length,
+      stalled_tasks_count: runningTasks.filter((task) => task.is_stalled)
+        .length,
     };
   }
 
@@ -1578,19 +1752,27 @@ class StarRocksCompactionExpert {
    * 计算历史性能
    */
   calculateHistoricalPerformance(completedTasks) {
-    if (completedTasks.length === 0) return this.getEmptyHistoricalPerformance();
+    if (completedTasks.length === 0)
+      return this.getEmptyHistoricalPerformance();
 
-    const successfulTasks = completedTasks.filter(task => task.is_successful);
+    const successfulTasks = completedTasks.filter((task) => task.is_successful);
     const durations = completedTasks
-      .filter(task => task.duration_hours > 0)
-      .map(task => task.duration_hours);
+      .filter((task) => task.duration_hours > 0)
+      .map((task) => task.duration_hours);
 
     return {
       total_tasks: completedTasks.length,
       successful_tasks: successfulTasks.length,
-      success_rate: (successfulTasks.length / completedTasks.length * 100).toFixed(1),
-      avg_duration_hours: durations.length > 0 ?
-        (durations.reduce((sum, d) => sum + d, 0) / durations.length).toFixed(2) : 0
+      success_rate: (
+        (successfulTasks.length / completedTasks.length) *
+        100
+      ).toFixed(1),
+      avg_duration_hours:
+        durations.length > 0
+          ? (
+              durations.reduce((sum, d) => sum + d, 0) / durations.length
+            ).toFixed(2)
+          : 0,
     };
   }
 
@@ -1612,7 +1794,8 @@ class StarRocksCompactionExpert {
 
     // 基于任务执行效率扣分
     const taskStats = compactionData.task_execution_stats || {};
-    if (taskStats.stalled_tasks_count > 0) score -= taskStats.stalled_tasks_count * 5;
+    if (taskStats.stalled_tasks_count > 0)
+      score -= taskStats.stalled_tasks_count * 5;
 
     score = Math.max(0, score);
 
@@ -1624,8 +1807,12 @@ class StarRocksCompactionExpert {
     return {
       score: Math.round(score),
       level: level,
-      status: diagnosis.criticals.length > 0 ? 'CRITICAL' :
-              diagnosis.warnings.length > 0 ? 'WARNING' : 'HEALTHY'
+      status:
+        diagnosis.criticals.length > 0
+          ? 'CRITICAL'
+          : diagnosis.warnings.length > 0
+            ? 'WARNING'
+            : 'HEALTHY',
     };
   }
 
@@ -1638,7 +1825,9 @@ class StarRocksCompactionExpert {
     const issues = diagnosis.issues.length;
 
     if (criticals > 0) {
-      const emergencyIssues = diagnosis.criticals.filter(c => c.priority === 'IMMEDIATE').length;
+      const emergencyIssues = diagnosis.criticals.filter(
+        (c) => c.priority === 'IMMEDIATE',
+      ).length;
       if (emergencyIssues > 0) {
         return `Compaction系统存在 ${emergencyIssues} 个紧急问题，需立即处理`;
       }
@@ -1662,7 +1851,7 @@ class StarRocksCompactionExpert {
       warning_partitions: 0,
       critical_partitions: 0,
       emergency_partitions: 0,
-      problematic_ratio: 0
+      problematic_ratio: 0,
     };
   }
 
@@ -1673,7 +1862,7 @@ class StarRocksCompactionExpert {
       avg_threads_per_node: 0,
       min_threads: 0,
       max_threads: 0,
-      thread_variance: 0
+      thread_variance: 0,
     };
   }
 
@@ -1684,7 +1873,7 @@ class StarRocksCompactionExpert {
       avg_tasks_per_node: 0,
       max_tasks_per_node: 0,
       slow_tasks_count: 0,
-      stalled_tasks_count: 0
+      stalled_tasks_count: 0,
     };
   }
 
@@ -1693,7 +1882,7 @@ class StarRocksCompactionExpert {
       total_tasks: 0,
       successful_tasks: 0,
       success_rate: 0,
-      avg_duration_hours: 0
+      avg_duration_hours: 0,
     };
   }
 
@@ -1702,7 +1891,7 @@ class StarRocksCompactionExpert {
       total_nodes: 0,
       alive_nodes: 0,
       total_cpu_cores: 0,
-      avg_cpu_cores: 0
+      avg_cpu_cores: 0,
     };
   }
 
@@ -1712,7 +1901,7 @@ class StarRocksCompactionExpert {
       mode: 'UNKNOWN',
       is_adaptive: false,
       is_disabled: false,
-      error: 'Unable to retrieve configuration'
+      error: 'Unable to retrieve configuration',
     };
   }
 
@@ -1721,13 +1910,16 @@ class StarRocksCompactionExpert {
   calculateVariance(numbers) {
     if (numbers.length <= 1) return 0;
     const mean = numbers.reduce((sum, n) => sum + n, 0) / numbers.length;
-    const variance = numbers.reduce((sum, n) => sum + Math.pow(n - mean, 2), 0) / numbers.length;
+    const variance =
+      numbers.reduce((sum, n) => sum + Math.pow(n - mean, 2), 0) /
+      numbers.length;
     return Math.round(variance * 100) / 100;
   }
 
   calculateClusterLoadLevel(runningTasks, aliveNodes, csStats) {
     const tasksPerNode = aliveNodes > 0 ? runningTasks / aliveNodes : 0;
-    const highCSPartitions = (csStats.critical_partitions || 0) + (csStats.emergency_partitions || 0);
+    const highCSPartitions =
+      (csStats.critical_partitions || 0) + (csStats.emergency_partitions || 0);
 
     if (tasksPerNode > 8 || highCSPartitions > 50) return 'HIGH';
     if (tasksPerNode > 5 || highCSPartitions > 20) return 'MEDIUM';
@@ -1747,8 +1939,8 @@ class StarRocksCompactionExpert {
       current_utilization_percent: Math.round(utilization * 100) / 100,
       running_tasks: runningTasks,
       total_available_threads: totalThreads,
-      efficiency_rating: utilization > 80 ? 'HIGH' :
-                        utilization > 50 ? 'MEDIUM' : 'LOW'
+      efficiency_rating:
+        utilization > 80 ? 'HIGH' : utilization > 50 ? 'MEDIUM' : 'LOW',
     };
   }
 
@@ -1777,15 +1969,20 @@ class StarRocksCompactionExpert {
       optimization_level: optimizationLevel,
       current_threads_per_core: avgThreadsPerCore,
       recommended_threads_per_core: '0.25-0.5',
-      estimated_improvement: optimizationLevel === 'HIGH' ? '20-40%' :
-                            optimizationLevel === 'MEDIUM' ? '10-20%' : '0-5%',
-      specific_recommendations: recommendations
+      estimated_improvement:
+        optimizationLevel === 'HIGH'
+          ? '20-40%'
+          : optimizationLevel === 'MEDIUM'
+            ? '10-20%'
+            : '0-5%',
+      specific_recommendations: recommendations,
     };
   }
 
   assessAdaptiveModeEffectiveness(adaptiveMaxTasks, highCSPartitions) {
     // 评估自适应模式的有效性
-    const taskToPartitionRatio = highCSPartitions > 0 ? adaptiveMaxTasks / highCSPartitions : 1;
+    const taskToPartitionRatio =
+      highCSPartitions > 0 ? adaptiveMaxTasks / highCSPartitions : 1;
 
     let effectiveness = 'MEDIUM';
     let reasons = [];
@@ -1805,22 +2002,26 @@ class StarRocksCompactionExpert {
       effectiveness_level: effectiveness,
       task_to_partition_ratio: Math.round(taskToPartitionRatio * 100) / 100,
       assessment_reasons: reasons,
-      recommended_action: effectiveness === 'LOW' ?
-        '考虑增加集群节点或调整Compaction策略' :
-        '当前配置合适'
+      recommended_action:
+        effectiveness === 'LOW'
+          ? '考虑增加集群节点或调整Compaction策略'
+          : '当前配置合适',
     };
   }
 
   calculateCompactionGrowthProjection(compactionData) {
     // 基于当前数据预测增长趋势（简化版本）
     const csStats = compactionData.cs_statistics || {};
-    const totalHighCS = (csStats.warning_partitions || 0) + (csStats.critical_partitions || 0) + (csStats.emergency_partitions || 0);
+    const totalHighCS =
+      (csStats.warning_partitions || 0) +
+      (csStats.critical_partitions || 0) +
+      (csStats.emergency_partitions || 0);
 
     return {
       current_high_cs_partitions: totalHighCS,
       projected_monthly_growth: Math.ceil(totalHighCS * 0.1), // 假设月增长10%
       capacity_needed: Math.ceil(totalHighCS * 1.5), // 需要1.5倍处理能力
-      scaling_timeline: totalHighCS > 100 ? '1-2个月内' : '3-6个月内'
+      scaling_timeline: totalHighCS > 100 ? '1-2个月内' : '3-6个月内',
     };
   }
 
@@ -1837,7 +2038,7 @@ class StarRocksCompactionExpert {
         type: 'high_cs_accumulation',
         severity: 'HIGH',
         description: '高CS分区过多，可能存在Compaction效率问题',
-        impact: '严重影响查询性能，可能导致查询超时'
+        impact: '严重影响查询性能，可能导致查询超时',
       });
     }
 
@@ -1847,7 +2048,7 @@ class StarRocksCompactionExpert {
         type: 'thread_under_utilization',
         severity: 'MEDIUM',
         description: 'Compaction线程配置过低，无法充分利用CPU资源',
-        impact: 'Compaction处理速度慢，可能导致CS积累'
+        impact: 'Compaction处理速度慢，可能导致CS积累',
       });
     }
 
@@ -1859,15 +2060,19 @@ class StarRocksCompactionExpert {
         type: 'task_scheduling_issue',
         severity: 'HIGH',
         description: '存在高CS分区但没有运行中的Compaction任务',
-        impact: 'Compaction任务可能未正常调度或执行'
+        impact: 'Compaction任务可能未正常调度或执行',
       });
     }
 
     return {
       total_bottlenecks: bottlenecks.length,
       bottlenecks: bottlenecks,
-      overall_assessment: bottlenecks.length === 0 ? 'NO_MAJOR_BOTTLENECKS' :
-                         bottlenecks.some(b => b.severity === 'HIGH') ? 'CRITICAL_BOTTLENECKS' : 'MINOR_BOTTLENECKS'
+      overall_assessment:
+        bottlenecks.length === 0
+          ? 'NO_MAJOR_BOTTLENECKS'
+          : bottlenecks.some((b) => b.severity === 'HIGH')
+            ? 'CRITICAL_BOTTLENECKS'
+            : 'MINOR_BOTTLENECKS',
     };
   }
 
@@ -1875,17 +2080,21 @@ class StarRocksCompactionExpert {
     // 执行高级诊断分析
     return {
       bottleneck_analysis: this.identifyCompactionBottlenecks(compactionData),
-      cs_distribution: this.analyzeCSDistribution(compactionData.cs_statistics || {}),
+      cs_distribution: this.analyzeCSDistribution(
+        compactionData.cs_statistics || {},
+      ),
       thread_utilization: this.calculateThreadUtilization(compactionData),
       cluster_utilization: {
         load_level: this.calculateClusterLoadLevel(
           compactionData.running_tasks?.tasks?.length || 0,
           compactionData.cluster_stats?.total_nodes || 1,
-          compactionData.cs_statistics || {}
-        )
+          compactionData.cs_statistics || {},
+        ),
       },
-      growth_projection: this.calculateCompactionGrowthProjection(compactionData),
-      optimization_opportunities: this.identifyOptimizationOpportunities(compactionData)
+      growth_projection:
+        this.calculateCompactionGrowthProjection(compactionData),
+      optimization_opportunities:
+        this.identifyOptimizationOpportunities(compactionData),
     };
   }
 
@@ -1901,25 +2110,28 @@ class StarRocksCompactionExpert {
         type: 'cs_optimization',
         priority: 'HIGH',
         description: '优化高CS分区处理策略',
-        potential_impact: '显著改善查询性能'
+        potential_impact: '显著改善查询性能',
       });
     }
 
     // 线程配置优化机会
-    const avgThreadsPerCore = threadConfig.cluster_stats?.avg_threads_per_core || 0;
+    const avgThreadsPerCore =
+      threadConfig.cluster_stats?.avg_threads_per_core || 0;
     if (avgThreadsPerCore < 0.25 || avgThreadsPerCore > 0.75) {
       opportunities.push({
         type: 'thread_optimization',
         priority: 'MEDIUM',
         description: '调整Compaction线程配置以匹配硬件资源',
-        potential_impact: '提高Compaction效率'
+        potential_impact: '提高Compaction效率',
       });
     }
 
     return {
       total_opportunities: opportunities.length,
       opportunities: opportunities,
-      optimization_priority: opportunities.some(o => o.priority === 'HIGH') ? 'HIGH' : 'MEDIUM'
+      optimization_priority: opportunities.some((o) => o.priority === 'HIGH')
+        ? 'HIGH'
+        : 'MEDIUM',
     };
   }
 
@@ -1927,7 +2139,10 @@ class StarRocksCompactionExpert {
     // 生成扩展建议
     const csStats = compactionData.cs_statistics || {};
     const clusterStats = compactionData.cluster_stats || {};
-    const totalHighCS = (csStats.warning_partitions || 0) + (csStats.critical_partitions || 0) + (csStats.emergency_partitions || 0);
+    const totalHighCS =
+      (csStats.warning_partitions || 0) +
+      (csStats.critical_partitions || 0) +
+      (csStats.emergency_partitions || 0);
 
     if (totalHighCS > 100) {
       return {
@@ -1935,7 +2150,7 @@ class StarRocksCompactionExpert {
         urgency: 'HIGH',
         recommended_action: '建议增加集群节点或优化Compaction配置',
         timeline: '1-2周内',
-        expected_benefit: '显著降低CS积累速度'
+        expected_benefit: '显著降低CS积累速度',
       };
     } else if (totalHighCS > 50) {
       return {
@@ -1943,13 +2158,13 @@ class StarRocksCompactionExpert {
         urgency: 'MEDIUM',
         recommended_action: '考虑优化Compaction线程配置',
         timeline: '1个月内',
-        expected_benefit: '改善CS处理效率'
+        expected_benefit: '改善CS处理效率',
       };
     }
 
     return {
       scaling_needed: false,
-      recommendation: '当前规模合适，建议定期监控'
+      recommendation: '当前规模合适，建议定期监控',
     };
   }
 
@@ -1963,10 +2178,13 @@ class StarRocksCompactionExpert {
    */
   async diagnose(connection, includeDetails = false) {
     // 调用完整分析方法，并转换为协调器期望的格式
-    const comprehensiveResult = await this.performComprehensiveAnalysis(connection, {
-      includeDetailedData: includeDetails,
-      analysisScope: 'full'
-    });
+    const comprehensiveResult = await this.performComprehensiveAnalysis(
+      connection,
+      {
+        includeDetailedData: includeDetails,
+        analysisScope: 'full',
+      },
+    );
 
     // 转换为协调器期望的结果格式
     return {
@@ -1979,31 +2197,41 @@ class StarRocksCompactionExpert {
       compaction_health: {
         score: comprehensiveResult.compaction_health.score,
         level: comprehensiveResult.compaction_health.level,
-        status: comprehensiveResult.compaction_health.status
+        status: comprehensiveResult.compaction_health.status,
       },
 
       // 诊断结果
       diagnosis_results: {
         total_issues: comprehensiveResult.diagnosis_results.total_issues,
-        criticals: comprehensiveResult.diagnosis_results.criticals.map(c => ({
+        criticals: comprehensiveResult.diagnosis_results.criticals.map((c) => ({
           type: c.type,
           message: c.message,
           urgency: c.urgency,
-          impact: c.impact
+          impact: c.impact,
         })),
-        warnings: comprehensiveResult.diagnosis_results.warnings.map(w => ({
+        warnings: comprehensiveResult.diagnosis_results.warnings.map((w) => ({
           type: w.type,
-          message: w.message
+          message: w.message,
         })),
-        summary: comprehensiveResult.diagnosis_results.summary
+        summary: comprehensiveResult.diagnosis_results.summary,
       },
 
       // 专业建议
-      professional_recommendations: comprehensiveResult.comprehensive_recommendations || [],
+      professional_recommendations:
+        comprehensiveResult.comprehensive_recommendations || [],
 
       // 原始数据（如果请求详细信息）
-      raw_data: includeDetails ? comprehensiveResult.collected_data : null
+      raw_data: includeDetails ? comprehensiveResult.collected_data : null,
     };
+  }
+
+  /**
+   * analyze() 方法 - 兼容协调器调用
+   * 这是 diagnose() 的别名，用于统一专家接口
+   */
+  async analyze(connection, options = {}) {
+    const includeDetails = options.includeDetails || false;
+    return await this.diagnose(connection, includeDetails);
   }
 
   /**
@@ -2034,7 +2262,7 @@ class StarRocksCompactionExpert {
       `);
 
       data.system_resources = {
-        be_nodes: beResources.map(node => ({
+        be_nodes: beResources.map((node) => ({
           backend_id: node.BackendId,
           host: node.Host,
           alive: node.Alive === 'true',
@@ -2043,23 +2271,28 @@ class StarRocksCompactionExpert {
           cpu_usage_pct: parseFloat(node.CpuUsage) || 0,
           disk_used_pct: parseFloat(node.MaxDiskUsedPct) || 0,
           net_in_rate: parseFloat(node.NetInRate) || 0,
-          net_out_rate: parseFloat(node.NetOutRate) || 0
+          net_out_rate: parseFloat(node.NetOutRate) || 0,
         })),
-        collection_time: new Date().toISOString()
+        collection_time: new Date().toISOString(),
       };
 
       // 计算集群级别资源统计
-      const aliveNodes = data.system_resources.be_nodes.filter(n => n.alive);
+      const aliveNodes = data.system_resources.be_nodes.filter((n) => n.alive);
       data.system_resources.cluster_stats = {
         total_nodes: beResources.length,
         alive_nodes: aliveNodes.length,
         total_cpu_cores: aliveNodes.reduce((sum, n) => sum + n.cpu_cores, 0),
-        avg_cpu_usage: aliveNodes.reduce((sum, n) => sum + n.cpu_usage_pct, 0) / aliveNodes.length,
-        max_disk_usage: Math.max(...aliveNodes.map(n => n.disk_used_pct)),
-        avg_disk_usage: aliveNodes.reduce((sum, n) => sum + n.disk_used_pct, 0) / aliveNodes.length,
-        avg_memory_usage: aliveNodes.reduce((sum, n) => sum + n.mem_used_pct, 0) / aliveNodes.length
+        avg_cpu_usage:
+          aliveNodes.reduce((sum, n) => sum + n.cpu_usage_pct, 0) /
+          aliveNodes.length,
+        max_disk_usage: Math.max(...aliveNodes.map((n) => n.disk_used_pct)),
+        avg_disk_usage:
+          aliveNodes.reduce((sum, n) => sum + n.disk_used_pct, 0) /
+          aliveNodes.length,
+        avg_memory_usage:
+          aliveNodes.reduce((sum, n) => sum + n.mem_used_pct, 0) /
+          aliveNodes.length,
       };
-
     } catch (error) {
       console.warn('获取系统资源信息失败:', error.message);
       data.system_resources = this.getEmptySystemResources();
@@ -2079,7 +2312,7 @@ class StarRocksCompactionExpert {
       `);
 
       const beConfigMap = {};
-      feConfigs.forEach(config => {
+      feConfigs.forEach((config) => {
         beConfigMap[config.Variable_name] = config.Value;
       });
 
@@ -2087,13 +2320,15 @@ class StarRocksCompactionExpert {
         fe_configs: beConfigMap,
         collection_time: new Date().toISOString(),
         critical_params: {
-          max_compaction_tasks: parseInt(beConfigMap.max_compaction_tasks) || 10,
+          max_compaction_tasks:
+            parseInt(beConfigMap.max_compaction_tasks) || 10,
           compact_threads: parseInt(beConfigMap.compact_threads) || 2,
-          compaction_lower_size_mbytes: parseInt(beConfigMap.compaction_lower_size_mbytes) || 256,
-          compaction_upper_size_mbytes: parseInt(beConfigMap.compaction_upper_size_mbytes) || 1024
-        }
+          compaction_lower_size_mbytes:
+            parseInt(beConfigMap.compaction_lower_size_mbytes) || 256,
+          compaction_upper_size_mbytes:
+            parseInt(beConfigMap.compaction_upper_size_mbytes) || 1024,
+        },
       };
-
     } catch (error) {
       console.warn('获取参数配置失败:', error.message);
       data.parameter_config = this.getEmptyParameterConfig();
@@ -2126,24 +2361,38 @@ class StarRocksCompactionExpert {
 
       // 基于表统计信息推断导入模式
       data.ingestion_patterns = {
-        active_tables: tableStats.map(table => ({
+        active_tables: tableStats.map((table) => ({
           database_name: table.database_name,
           table_name: table.table_name,
-          estimated_size_mb: Math.round((table.data_length + table.index_length) / 1024 / 1024),
+          estimated_size_mb: Math.round(
+            (table.data_length + table.index_length) / 1024 / 1024,
+          ),
           row_count: table.table_rows,
           last_update: table.update_time,
-          estimated_ingestion_pattern: this.inferIngestionPattern(table.table_rows, table.data_length)
+          estimated_ingestion_pattern: this.inferIngestionPattern(
+            table.table_rows,
+            table.data_length,
+          ),
         })),
         analysis_summary: {
           total_analyzed_tables: tableStats.length,
           total_estimated_data_gb: Math.round(
-            tableStats.reduce((sum, t) => sum + (t.data_length + t.index_length), 0) / 1024 / 1024 / 1024
+            tableStats.reduce(
+              (sum, t) => sum + (t.data_length + t.index_length),
+              0,
+            ) /
+              1024 /
+              1024 /
+              1024,
           ),
-          large_tables: tableStats.filter(t => (t.data_length + t.index_length) > 1024 * 1024 * 1024).length,
-          high_row_count_tables: tableStats.filter(t => t.table_rows > 1000000).length
-        }
+          large_tables: tableStats.filter(
+            (t) => t.data_length + t.index_length > 1024 * 1024 * 1024,
+          ).length,
+          high_row_count_tables: tableStats.filter(
+            (t) => t.table_rows > 1000000,
+          ).length,
+        },
       };
-
     } catch (error) {
       console.warn('获取导入模式数据失败:', error.message);
       data.ingestion_patterns = this.getEmptyIngestionPatterns();
@@ -2159,11 +2408,23 @@ class StarRocksCompactionExpert {
     if (rowCount > 10000000 && avgRowSize > 1000) {
       return { pattern: 'LARGE_BATCH', frequency: 'LOW', concern_level: 'LOW' };
     } else if (rowCount > 1000000 && avgRowSize < 100) {
-      return { pattern: 'HIGH_FREQUENCY_SMALL', frequency: 'HIGH', concern_level: 'HIGH' };
+      return {
+        pattern: 'HIGH_FREQUENCY_SMALL',
+        frequency: 'HIGH',
+        concern_level: 'HIGH',
+      };
     } else if (rowCount > 100000) {
-      return { pattern: 'MODERATE_BATCH', frequency: 'MEDIUM', concern_level: 'MEDIUM' };
+      return {
+        pattern: 'MODERATE_BATCH',
+        frequency: 'MEDIUM',
+        concern_level: 'MEDIUM',
+      };
     } else {
-      return { pattern: 'SMALL_TABLE', frequency: 'UNKNOWN', concern_level: 'LOW' };
+      return {
+        pattern: 'SMALL_TABLE',
+        frequency: 'UNKNOWN',
+        concern_level: 'LOW',
+      };
     }
   }
 
@@ -2180,9 +2441,9 @@ class StarRocksCompactionExpert {
         avg_cpu_usage: 0,
         max_disk_usage: 0,
         avg_disk_usage: 0,
-        avg_memory_usage: 0
+        avg_memory_usage: 0,
       },
-      collection_time: new Date().toISOString()
+      collection_time: new Date().toISOString(),
     };
   }
 
@@ -2196,9 +2457,9 @@ class StarRocksCompactionExpert {
         max_compaction_tasks: 10,
         compact_threads: 2,
         compaction_lower_size_mbytes: 256,
-        compaction_upper_size_mbytes: 1024
+        compaction_upper_size_mbytes: 1024,
       },
-      collection_time: new Date().toISOString()
+      collection_time: new Date().toISOString(),
     };
   }
 
@@ -2212,8 +2473,8 @@ class StarRocksCompactionExpert {
         total_analyzed_tables: 0,
         total_estimated_data_gb: 0,
         large_tables: 0,
-        high_row_count_tables: 0
-      }
+        high_row_count_tables: 0,
+      },
     };
   }
 
@@ -2244,19 +2505,19 @@ class StarRocksCompactionExpert {
         impact: {
           compaction: 'Compaction任务可能因磁盘空间不足而失败或延迟',
           performance: '查询性能严重下降，可能出现服务不可用',
-          business: '业务连续性面临威胁'
+          business: '业务连续性面临威胁',
         },
         recommended_actions: [
           '立即清理临时文件和日志',
           '删除不必要的数据或归档历史数据',
           '紧急扩容磁盘空间',
-          '暂停非关键数据导入'
+          '暂停非关键数据导入',
         ],
         estimated_resolution_time: '30分钟-2小时',
         monitoring_commands: [
           'df -h  # 检查磁盘使用情况',
-          'du -sh /path/to/starrocks/storage/*  # 检查数据目录大小'
-        ]
+          'du -sh /path/to/starrocks/storage/*  # 检查数据目录大小',
+        ],
       });
     } else if (stats.max_disk_usage > 85) {
       diagnosis.warnings.push({
@@ -2267,8 +2528,8 @@ class StarRocksCompactionExpert {
         recommended_actions: [
           '计划在24小时内清理磁盘空间',
           '制定数据清理和归档策略',
-          '考虑磁盘扩容计划'
-        ]
+          '考虑磁盘扩容计划',
+        ],
       });
     }
 
@@ -2282,8 +2543,8 @@ class StarRocksCompactionExpert {
         recommended_actions: [
           '检查是否有异常的高CPU查询',
           '考虑在低峰期执行Compaction',
-          '优化查询负载分布'
-        ]
+          '优化查询负载分布',
+        ],
       });
     }
 
@@ -2297,8 +2558,8 @@ class StarRocksCompactionExpert {
         recommended_actions: [
           '检查内存消耗异常的查询',
           '调整查询并发度',
-          '考虑内存扩容'
-        ]
+          '考虑内存扩容',
+        ],
       });
     }
 
@@ -2313,8 +2574,8 @@ class StarRocksCompactionExpert {
         recommended_actions: [
           '立即检查不可用节点状态',
           '重启故障节点或替换硬件',
-          '评估是否需要临时调整副本数'
-        ]
+          '评估是否需要临时调整副本数',
+        ],
       });
     }
   }
@@ -2343,7 +2604,7 @@ class StarRocksCompactionExpert {
         recommended_value: '10-20',
         impact: 'Compaction并发度严重不足，无法及时处理高CS分区',
         fix_command: 'SET GLOBAL max_compaction_tasks = 15;',
-        risk_assessment: 'LOW - 该参数调整风险很小'
+        risk_assessment: 'LOW - 该参数调整风险很小',
       });
     } else if (params.max_compaction_tasks > 50) {
       diagnosis.warnings.push({
@@ -2351,7 +2612,7 @@ class StarRocksCompactionExpert {
         severity: 'WARNING',
         message: `max_compaction_tasks设置过高(${params.max_compaction_tasks})`,
         impact: '可能导致资源争用，影响查询性能',
-        fix_command: `SET GLOBAL max_compaction_tasks = ${Math.max(10, Math.floor((resources?.total_cpu_cores || 8) * 0.5))};`
+        fix_command: `SET GLOBAL max_compaction_tasks = ${Math.max(10, Math.floor((resources?.total_cpu_cores || 8) * 0.5))};`,
       });
     }
 
@@ -2366,7 +2627,7 @@ class StarRocksCompactionExpert {
           current_value: params.compact_threads,
           recommended_value: `${Math.floor(resources.total_cpu_cores * 0.4)}-${Math.floor(resources.total_cpu_cores * 0.6)}`,
           impact: 'CPU资源未充分利用，Compaction处理能力不足',
-          fix_command: `SET GLOBAL compact_threads = ${Math.floor(resources.total_cpu_cores * 0.5)};`
+          fix_command: `SET GLOBAL compact_threads = ${Math.floor(resources.total_cpu_cores * 0.5)};`,
         });
       } else if (threadsPerCore > 1) {
         diagnosis.warnings.push({
@@ -2374,7 +2635,7 @@ class StarRocksCompactionExpert {
           severity: 'WARNING',
           message: `compact_threads配置过高，超过CPU核心数`,
           impact: '可能导致线程上下文切换开销，降低效率',
-          fix_command: `SET GLOBAL compact_threads = ${Math.floor(resources.total_cpu_cores * 0.5)};`
+          fix_command: `SET GLOBAL compact_threads = ${Math.floor(resources.total_cpu_cores * 0.5)};`,
         });
       }
     }
@@ -2387,7 +2648,7 @@ class StarRocksCompactionExpert {
         message: `compaction_lower_size_mbytes过高(${params.compaction_lower_size_mbytes}MB)`,
         impact: '小文件无法及时合并，增加查询文件数',
         recommended_value: '128-256MB',
-        fix_command: 'SET GLOBAL compaction_lower_size_mbytes = 256;'
+        fix_command: 'SET GLOBAL compaction_lower_size_mbytes = 256;',
       });
     }
   }
@@ -2405,7 +2666,7 @@ class StarRocksCompactionExpert {
 
     // 检查高关注度表的导入模式
     const highConcernTables = patterns.active_tables.filter(
-      table => table.estimated_ingestion_pattern.concern_level === 'HIGH'
+      (table) => table.estimated_ingestion_pattern.concern_level === 'HIGH',
     );
 
     if (highConcernTables.length > 0) {
@@ -2413,19 +2674,23 @@ class StarRocksCompactionExpert {
         type: 'problematic_ingestion_patterns',
         severity: 'WARNING',
         message: `发现${highConcernTables.length}个表采用可能导致高CS的导入模式`,
-        affected_tables: highConcernTables.map(t => `${t.database_name}.${t.table_name}`),
-        pattern_analysis: highConcernTables.map(table => ({
+        affected_tables: highConcernTables.map(
+          (t) => `${t.database_name}.${t.table_name}`,
+        ),
+        pattern_analysis: highConcernTables.map((table) => ({
           table: `${table.database_name}.${table.table_name}`,
           pattern: table.estimated_ingestion_pattern.pattern,
-          concern: table.estimated_ingestion_pattern.pattern === 'HIGH_FREQUENCY_SMALL' ?
-            '高频小批次导入，容易产生大量小文件' : '导入模式可能不利于Compaction效率'
+          concern:
+            table.estimated_ingestion_pattern.pattern === 'HIGH_FREQUENCY_SMALL'
+              ? '高频小批次导入，容易产生大量小文件'
+              : '导入模式可能不利于Compaction效率',
         })),
         recommended_actions: [
           '调整导入策略：合并小批次为大批次',
           '使用Stream Load事务模式减少文件碎片',
           '设置合理的导入时间窗口',
-          '考虑使用批量导入替代实时导入'
-        ]
+          '考虑使用批量导入替代实时导入',
+        ],
       });
     }
 
@@ -2438,8 +2703,8 @@ class StarRocksCompactionExpert {
         recommendations: [
           '考虑增加Compaction线程数',
           '优化大表的分区策略',
-          '制定数据生命周期管理策略'
-        ]
+          '制定数据生命周期管理策略',
+        ],
       });
     }
   }
@@ -2474,7 +2739,7 @@ class StarRocksCompactionExpert {
 
     return {
       score: Math.max(0, Math.min(100, score)),
-      level: score >= 80 ? 'HIGH' : score >= 60 ? 'MEDIUM' : 'LOW'
+      level: score >= 80 ? 'HIGH' : score >= 60 ? 'MEDIUM' : 'LOW',
     };
   }
 
@@ -2494,51 +2759,56 @@ class StarRocksCompactionExpert {
     }
 
     // 复合原因1: 磁盘空间不足 + 线程配置不当 + 高CS积累
-    if (resources.max_disk_usage > 85 &&
-        config.compact_threads < resources.total_cpu_cores * 0.3 &&
-        (csStats.critical_partitions + csStats.emergency_partitions) > 5) {
-
+    if (
+      resources.max_disk_usage > 85 &&
+      config.compact_threads < resources.total_cpu_cores * 0.3 &&
+      csStats.critical_partitions + csStats.emergency_partitions > 5
+    ) {
       diagnosis.insights.push({
         type: 'compound_cause_disk_thread_cs',
         severity: 'HIGH',
         message: '发现复合原因：磁盘空间紧张+线程配置不足+高CS积累',
-        explanation: '磁盘空间不足限制Compaction执行，线程配置保守进一步降低处理能力，导致CS急剧积累',
+        explanation:
+          '磁盘空间不足限制Compaction执行，线程配置保守进一步降低处理能力，导致CS急剧积累',
         impact_multiplier: 2.5,
         integrated_solution: {
           priority_order: [
             '1. 立即清理磁盘空间至75%以下',
             '2. 调整compact_threads至推荐值',
             '3. 批量处理紧急CS分区',
-            '4. 监控CS下降趋势'
+            '4. 监控CS下降趋势',
           ],
           expected_resolution_time: '2-4小时',
           success_metrics: [
             '磁盘使用率 < 75%',
             'CS积累速度 < 50/小时',
-            '线程利用率 > 60%'
-          ]
-        }
+            '线程利用率 > 60%',
+          ],
+        },
       });
     }
 
     // 复合原因2: 高频导入 + 参数配置不当
-    if (patterns && patterns.total_estimated_data_gb > 100 &&
-        config.compaction_lower_size_mbytes > 256 &&
-        config.max_compaction_tasks < 10) {
-
+    if (
+      patterns &&
+      patterns.total_estimated_data_gb > 100 &&
+      config.compaction_lower_size_mbytes > 256 &&
+      config.max_compaction_tasks < 10
+    ) {
       diagnosis.insights.push({
         type: 'compound_cause_ingestion_config',
         severity: 'MEDIUM',
         message: '发现复合原因：大数据量+参数配置不当',
-        explanation: '大数据量环境配合不当的Compaction参数，导致小文件积累和处理能力不足',
+        explanation:
+          '大数据量环境配合不当的Compaction参数，导致小文件积累和处理能力不足',
         integrated_solution: {
           priority_order: [
             '1. 调整compaction_lower_size_mbytes至256MB',
             '2. 增加max_compaction_tasks至15',
             '3. 优化导入批次大小',
-            '4. 制定定期Compaction维护计划'
-          ]
-        }
+            '4. 制定定期Compaction维护计划',
+          ],
+        },
       });
     }
   }
@@ -2554,14 +2824,14 @@ class StarRocksCompactionExpert {
       insights.push({
         type: 'healthy_system_insight',
         message: 'Compaction系统运行健康',
-        recommendation: '继续保持当前配置，建议定期检查'
+        recommendation: '继续保持当前配置，建议定期检查',
       });
     } else if (diagnosis.criticals.length > 0) {
       insights.push({
         type: 'critical_issues_insight',
         message: `发现${diagnosis.criticals.length}个严重问题需要立即处理`,
         priority: 'IMMEDIATE',
-        recommendation: '建议按照专家建议的优先级顺序逐一解决问题'
+        recommendation: '建议按照专家建议的优先级顺序逐一解决问题',
       });
     }
 
@@ -2571,7 +2841,7 @@ class StarRocksCompactionExpert {
         type: 'cross_dimensional_insight',
         message: '发现跨维度复合问题，需要综合解决',
         complexity: 'HIGH',
-        recommendation: '建议采用集成解决方案，同时优化多个维度'
+        recommendation: '建议采用集成解决方案，同时优化多个维度',
       });
     }
 
@@ -2583,7 +2853,8 @@ class StarRocksCompactionExpert {
    */
   async getHighCompactionPartitions(connection, limit = 10, minScore = 100) {
     try {
-      const [partitions] = await connection.query(`
+      const [partitions] = await connection.query(
+        `
         SELECT
           DB_NAME as database_name,
           TABLE_NAME as table_name,
@@ -2597,7 +2868,9 @@ class StarRocksCompactionExpert {
         WHERE MAX_CS >= ?
         ORDER BY MAX_CS DESC
         LIMIT ?
-      `, [minScore, limit]);
+      `,
+        [minScore, limit],
+      );
 
       return {
         success: true,
@@ -2606,10 +2879,10 @@ class StarRocksCompactionExpert {
           total_count: partitions.length,
           filters: {
             min_score: minScore,
-            limit: limit
+            limit: limit,
           },
-          analysis: this.analyzeHighCompactionPartitions(partitions)
-        }
+          analysis: this.analyzeHighCompactionPartitions(partitions),
+        },
       };
     } catch (error) {
       return {
@@ -2617,8 +2890,8 @@ class StarRocksCompactionExpert {
         error: `Failed to retrieve high compaction partitions: ${error.message}`,
         data: {
           partitions: [],
-          total_count: 0
-        }
+          total_count: 0,
+        },
       };
     }
   }
@@ -2631,12 +2904,14 @@ class StarRocksCompactionExpert {
       return {
         summary: 'No high compaction score partitions found',
         severity: 'NORMAL',
-        recommendations: []
+        recommendations: [],
       };
     }
 
-    const maxScore = Math.max(...partitions.map(p => p.max_compaction_score));
-    const avgScore = partitions.reduce((sum, p) => sum + p.max_compaction_score, 0) / partitions.length;
+    const maxScore = Math.max(...partitions.map((p) => p.max_compaction_score));
+    const avgScore =
+      partitions.reduce((sum, p) => sum + p.max_compaction_score, 0) /
+      partitions.length;
 
     let severity = 'NORMAL';
     let recommendations = [];
@@ -2662,7 +2937,9 @@ class StarRocksCompactionExpert {
       max_score: maxScore,
       avg_score: avgScore,
       recommendations: recommendations,
-      affected_tables: [...new Set(partitions.map(p => `${p.database_name}.${p.table_name}`))].length
+      affected_tables: [
+        ...new Set(partitions.map((p) => `${p.database_name}.${p.table_name}`)),
+      ].length,
     };
   }
 
@@ -2683,8 +2960,10 @@ class StarRocksCompactionExpert {
       // 获取BE节点信息以便分析
       const [backends] = await connection.query('SHOW BACKENDS');
 
-      const analysis = threadConfig.map(config => {
-        const beInfo = backends.find(be => be.BackendId === config.be_id.toString());
+      const analysis = threadConfig.map((config) => {
+        const beInfo = backends.find(
+          (be) => be.BackendId === config.be_id.toString(),
+        );
         const threads = parseInt(config.thread_count);
         const cpuCores = beInfo ? parseInt(beInfo.CpuCores) || 1 : 1;
 
@@ -2694,11 +2973,15 @@ class StarRocksCompactionExpert {
           thread_count: threads,
           cpu_cores: cpuCores,
           threads_per_core: (threads / cpuCores).toFixed(2),
-          recommended_min: Math.max(this.rules.thread_config.absolute_min_threads,
-                                   Math.ceil(cpuCores * this.rules.thread_config.min_threads_per_core)),
-          recommended_max: Math.min(this.rules.thread_config.absolute_max_threads,
-                                   Math.ceil(cpuCores * this.rules.thread_config.max_threads_per_core)),
-          status: this.evaluateThreadConfig(threads, cpuCores)
+          recommended_min: Math.max(
+            this.rules.thread_config.absolute_min_threads,
+            Math.ceil(cpuCores * this.rules.thread_config.min_threads_per_core),
+          ),
+          recommended_max: Math.min(
+            this.rules.thread_config.absolute_max_threads,
+            Math.ceil(cpuCores * this.rules.thread_config.max_threads_per_core),
+          ),
+          status: this.evaluateThreadConfig(threads, cpuCores),
         };
       });
 
@@ -2710,10 +2993,15 @@ class StarRocksCompactionExpert {
             total_nodes: analysis.length,
             total_threads: analysis.reduce((sum, a) => sum + a.thread_count, 0),
             total_cpu_cores: analysis.reduce((sum, a) => sum + a.cpu_cores, 0),
-            avg_threads_per_core: (analysis.reduce((sum, a) => sum + parseFloat(a.threads_per_core), 0) / analysis.length).toFixed(2)
+            avg_threads_per_core: (
+              analysis.reduce(
+                (sum, a) => sum + parseFloat(a.threads_per_core),
+                0,
+              ) / analysis.length
+            ).toFixed(2),
           },
-          analysis: this.analyzeThreadConfiguration(analysis)
-        }
+          analysis: this.analyzeThreadConfiguration(analysis),
+        },
       };
     } catch (error) {
       return {
@@ -2721,8 +3009,8 @@ class StarRocksCompactionExpert {
         error: `Failed to retrieve compaction thread configuration: ${error.message}`,
         data: {
           thread_configurations: [],
-          cluster_summary: null
-        }
+          cluster_summary: null,
+        },
       };
     }
   }
@@ -2748,9 +3036,9 @@ class StarRocksCompactionExpert {
    * 分析线程配置
    */
   analyzeThreadConfiguration(analysis) {
-    const lowConfigNodes = analysis.filter(a => a.status === 'LOW');
-    const highConfigNodes = analysis.filter(a => a.status === 'HIGH');
-    const optimalNodes = analysis.filter(a => a.status === 'OPTIMAL');
+    const lowConfigNodes = analysis.filter((a) => a.status === 'LOW');
+    const highConfigNodes = analysis.filter((a) => a.status === 'HIGH');
+    const optimalNodes = analysis.filter((a) => a.status === 'OPTIMAL');
 
     let summary = '';
     let recommendations = [];
@@ -2775,9 +3063,9 @@ class StarRocksCompactionExpert {
       node_status: {
         optimal: optimalNodes.length,
         low: lowConfigNodes.length,
-        high: highConfigNodes.length
+        high: highConfigNodes.length,
       },
-      recommendations: recommendations
+      recommendations: recommendations,
     };
   }
 
@@ -2800,20 +3088,20 @@ class StarRocksCompactionExpert {
             ip: backend.IP,
             status: 'SUCCESS',
             previous_threads: null, // Would need to query before setting
-            new_threads: threadCount
+            new_threads: threadCount,
           });
         } catch (error) {
           results.push({
             be_id: backend.BackendId,
             ip: backend.IP,
             status: 'FAILED',
-            error: error.message
+            error: error.message,
           });
         }
       }
 
-      const successCount = results.filter(r => r.status === 'SUCCESS').length;
-      const failureCount = results.filter(r => r.status === 'FAILED').length;
+      const successCount = results.filter((r) => r.status === 'SUCCESS').length;
+      const failureCount = results.filter((r) => r.status === 'FAILED').length;
 
       return {
         success: failureCount === 0,
@@ -2824,9 +3112,9 @@ class StarRocksCompactionExpert {
           summary: {
             total_nodes: backends.length,
             successful_updates: successCount,
-            failed_updates: failureCount
-          }
-        }
+            failed_updates: failureCount,
+          },
+        },
       };
     } catch (error) {
       return {
@@ -2835,8 +3123,8 @@ class StarRocksCompactionExpert {
         data: {
           operation: 'set_compaction_threads',
           target_thread_count: threadCount,
-          results: []
-        }
+          results: [],
+        },
       };
     }
   }
@@ -2866,15 +3154,17 @@ class StarRocksCompactionExpert {
       return {
         success: true,
         data: {
-          running_tasks: includeDetails ? tasks : tasks.map(t => ({
-            be_id: t.be_id,
-            tablet_id: t.tablet_id,
-            progress: t.progress,
-            status: t.status
-          })),
+          running_tasks: includeDetails
+            ? tasks
+            : tasks.map((t) => ({
+                be_id: t.be_id,
+                tablet_id: t.tablet_id,
+                progress: t.progress,
+                status: t.status,
+              })),
           task_count: tasks.length,
-          analysis: taskAnalysis
-        }
+          analysis: taskAnalysis,
+        },
       };
     } catch (error) {
       return {
@@ -2882,8 +3172,8 @@ class StarRocksCompactionExpert {
         error: `Failed to retrieve running compaction tasks: ${error.message}`,
         data: {
           running_tasks: [],
-          task_count: 0
-        }
+          task_count: 0,
+        },
       };
     }
   }
@@ -2895,19 +3185,19 @@ class StarRocksCompactionExpert {
     if (tasks.length === 0) {
       return {
         summary: 'No running compaction tasks found',
-        status: 'IDLE'
+        status: 'IDLE',
       };
     }
 
     const now = new Date();
-    const longRunningTasks = tasks.filter(task => {
+    const longRunningTasks = tasks.filter((task) => {
       const startTime = new Date(task.start_time);
       const runningHours = (now - startTime) / (1000 * 60 * 60);
       return runningHours > this.rules.task_execution.slow_task_threshold_hours;
     });
 
-    const stalledTasks = tasks.filter(task =>
-      task.progress < 50 && task.runs > 5
+    const stalledTasks = tasks.filter(
+      (task) => task.progress < 50 && task.runs > 5,
     );
 
     let status = 'NORMAL';
@@ -2924,14 +3214,23 @@ class StarRocksCompactionExpert {
       status: status,
       long_running_count: longRunningTasks.length,
       stalled_count: stalledTasks.length,
-      avg_progress: tasks.length > 0 ? (tasks.reduce((sum, t) => sum + t.progress, 0) / tasks.length).toFixed(1) : 0
+      avg_progress:
+        tasks.length > 0
+          ? (
+              tasks.reduce((sum, t) => sum + t.progress, 0) / tasks.length
+            ).toFixed(1)
+          : 0,
     };
   }
 
   /**
    * 分析高 Compaction Score 原因
    */
-  async analyzeHighCompactionScore(connection, targetDatabase = null, minScore = 100) {
+  async analyzeHighCompactionScore(
+    connection,
+    targetDatabase = null,
+    minScore = 100,
+  ) {
     try {
       let query = `
         SELECT
@@ -2964,8 +3263,9 @@ class StarRocksCompactionExpert {
         data: {
           high_score_partitions: partitions,
           analysis: analysis,
-          recommendations: this.generateCompactionScoreRecommendations(analysis)
-        }
+          recommendations:
+            this.generateCompactionScoreRecommendations(analysis),
+        },
       };
     } catch (error) {
       const errorAnalysis = {
@@ -2976,10 +3276,10 @@ class StarRocksCompactionExpert {
           avg_score: 0,
           total_partitions: 0,
           affected_databases: 0,
-          affected_tables: 0
+          affected_tables: 0,
         },
         by_database: [],
-        by_table: []
+        by_table: [],
       };
 
       return {
@@ -2988,8 +3288,9 @@ class StarRocksCompactionExpert {
         data: {
           high_score_partitions: [],
           analysis: errorAnalysis,
-          recommendations: this.generateCompactionScoreRecommendations(errorAnalysis)
-        }
+          recommendations:
+            this.generateCompactionScoreRecommendations(errorAnalysis),
+        },
       };
     }
   }
@@ -3007,20 +3308,20 @@ class StarRocksCompactionExpert {
           avg_score: 0,
           total_partitions: 0,
           affected_databases: 0,
-          affected_tables: 0
+          affected_tables: 0,
         },
         by_database: [],
-        by_table: []
+        by_table: [],
       };
     }
 
-    const scores = partitions.map(p => p.max_compaction_score);
+    const scores = partitions.map((p) => p.max_compaction_score);
     const maxScore = Math.max(...scores);
     const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
 
     // 按数据库分组分析
     const byDatabase = {};
-    partitions.forEach(p => {
+    partitions.forEach((p) => {
       if (!byDatabase[p.database_name]) {
         byDatabase[p.database_name] = [];
       }
@@ -3029,7 +3330,7 @@ class StarRocksCompactionExpert {
 
     // 按表分组分析
     const byTable = {};
-    partitions.forEach(p => {
+    partitions.forEach((p) => {
       const tableKey = `${p.database_name}.${p.table_name}`;
       if (!byTable[tableKey]) {
         byTable[tableKey] = [];
@@ -3054,20 +3355,26 @@ class StarRocksCompactionExpert {
         avg_score: avgScore.toFixed(2),
         total_partitions: partitions.length,
         affected_databases: Object.keys(byDatabase).length,
-        affected_tables: Object.keys(byTable).length
+        affected_tables: Object.keys(byTable).length,
       },
       by_database: Object.entries(byDatabase).map(([db, parts]) => ({
         database: db,
         partition_count: parts.length,
-        max_score: Math.max(...parts.map(p => p.max_compaction_score)),
-        avg_score: (parts.reduce((sum, p) => sum + p.max_compaction_score, 0) / parts.length).toFixed(2)
+        max_score: Math.max(...parts.map((p) => p.max_compaction_score)),
+        avg_score: (
+          parts.reduce((sum, p) => sum + p.max_compaction_score, 0) /
+          parts.length
+        ).toFixed(2),
       })),
       by_table: Object.entries(byTable).map(([table, parts]) => ({
         table: table,
         partition_count: parts.length,
-        max_score: Math.max(...parts.map(p => p.max_compaction_score)),
-        avg_score: (parts.reduce((sum, p) => sum + p.max_compaction_score, 0) / parts.length).toFixed(2)
-      }))
+        max_score: Math.max(...parts.map((p) => p.max_compaction_score)),
+        avg_score: (
+          parts.reduce((sum, p) => sum + p.max_compaction_score, 0) /
+          parts.length
+        ).toFixed(2),
+      })),
     };
   }
 
@@ -3079,18 +3386,20 @@ class StarRocksCompactionExpert {
 
     // 添加空值检查
     if (!analysis || !analysis.statistics) {
-      return [{
-        priority: 'INFO',
-        action: '无分析数据',
-        reason: '无法生成建议'
-      }];
+      return [
+        {
+          priority: 'INFO',
+          action: '无分析数据',
+          reason: '无法生成建议',
+        },
+      ];
     }
 
     if (analysis.severity === 'EMERGENCY') {
       recommendations.push({
         priority: 'URGENT',
         action: '立即手动触发最高 CS 分区的 compaction',
-        reason: '防止查询性能严重下降'
+        reason: '防止查询性能严重下降',
       });
     }
 
@@ -3098,7 +3407,7 @@ class StarRocksCompactionExpert {
       recommendations.push({
         priority: 'HIGH',
         action: '增加 compaction 线程数',
-        reason: '提高 compaction 处理能力'
+        reason: '提高 compaction 处理能力',
       });
     }
 
@@ -3106,14 +3415,14 @@ class StarRocksCompactionExpert {
       recommendations.push({
         priority: 'MEDIUM',
         action: '制定分批 compaction 计划',
-        reason: '避免同时处理过多表影响系统性能'
+        reason: '避免同时处理过多表影响系统性能',
       });
     }
 
     recommendations.push({
       priority: 'LOW',
       action: '建立 CS 监控告警',
-      reason: '及早发现和处理高 CS 问题'
+      reason: '及早发现和处理高 CS 问题',
     });
 
     return recommendations;
@@ -3136,8 +3445,8 @@ class StarRocksCompactionExpert {
           table: table,
           partition: partition,
           status: 'INITIATED',
-          message: `Compaction initiated for partition ${database}.${table}.${partition}`
-        }
+          message: `Compaction initiated for partition ${database}.${table}.${partition}`,
+        },
       };
     } catch (error) {
       return {
@@ -3148,8 +3457,8 @@ class StarRocksCompactionExpert {
           database: database,
           table: table,
           partition: partition,
-          status: 'FAILED'
-        }
+          status: 'FAILED',
+        },
       };
     }
   }
@@ -3160,19 +3469,19 @@ class StarRocksCompactionExpert {
    */
   getToolHandlers() {
     return {
-      'get_table_partitions_compaction_score': async (args, context) => {
+      get_table_partitions_compaction_score: async (args, context) => {
         const connection = context.connection;
         const data = {};
         await this.collectTableSpecificData(connection, data, {
           targetDatabase: args.database_name,
-          targetTable: args.table_name
+          targetTable: args.table_name,
         });
 
         const partitions = data.target_table_analysis?.partitions || [];
         const scoreThreshold = args.score_threshold || 0;
 
-        const filteredPartitions = partitions.filter(partition =>
-          partition.max_cs >= scoreThreshold
+        const filteredPartitions = partitions.filter(
+          (partition) => partition.max_cs >= scoreThreshold,
         );
 
         return {
@@ -3181,7 +3490,7 @@ class StarRocksCompactionExpert {
           score_threshold: scoreThreshold,
           total_partitions: partitions.length,
           filtered_partitions: filteredPartitions.length,
-          partitions: filteredPartitions.map(partition => ({
+          partitions: filteredPartitions.map((partition) => ({
             partition_name: partition.partition,
             max_compaction_score: partition.max_cs,
             avg_compaction_score: partition.avg_cs,
@@ -3190,37 +3499,41 @@ class StarRocksCompactionExpert {
             data_size: partition.data_size,
             storage_size: partition.storage_size,
             buckets: partition.buckets,
-            replication_num: partition.replication_num
-          }))
+            replication_num: partition.replication_num,
+          })),
         };
       },
-      'get_high_compaction_partitions': async (args, context) => {
+      get_high_compaction_partitions: async (args, context) => {
         const connection = context.connection;
         const limit = args.limit || 50;
         const threshold = args.threshold || 100;
-        return await this.getHighCompactionPartitions(connection, limit, threshold);
+        return await this.getHighCompactionPartitions(
+          connection,
+          limit,
+          threshold,
+        );
       },
-      'get_compaction_threads': async (args, context) => {
+      get_compaction_threads: async (args, context) => {
         const connection = context.connection;
         return await this.getCompactionThreads(connection);
       },
-      'set_compaction_threads': async (args, context) => {
+      set_compaction_threads: async (args, context) => {
         const connection = context.connection;
         return await this.setCompactionThreads(connection, args.thread_count);
       },
-      'get_running_compaction_tasks': async (args, context) => {
+      get_running_compaction_tasks: async (args, context) => {
         const connection = context.connection;
         const includeDetails = args.include_details !== false;
         return await this.getRunningCompactionTasks(connection, includeDetails);
       },
-      'analyze_high_compaction_score': async (args, context) => {
+      analyze_high_compaction_score: async (args, context) => {
         const connection = context.connection;
         return await this.analyzeHighCompactionScore(
           connection,
           args.database_name || null,
-          args.include_details !== false
+          args.include_details !== false,
         );
-      }
+      },
     };
   }
 
@@ -3237,15 +3550,15 @@ class StarRocksCompactionExpert {
           properties: {
             database_name: {
               type: 'string',
-              description: '数据库名称'
+              description: '数据库名称',
             },
             table_name: {
               type: 'string',
-              description: '表名称'
-            }
+              description: '表名称',
+            },
           },
-          required: ['database_name', 'table_name']
-        }
+          required: ['database_name', 'table_name'],
+        },
       },
       {
         name: 'get_high_compaction_partitions',
@@ -3256,16 +3569,16 @@ class StarRocksCompactionExpert {
             threshold: {
               type: 'number',
               description: 'Compaction Score 阈值（默认100）',
-              default: 100
+              default: 100,
             },
             limit: {
               type: 'number',
               description: '返回结果数量限制（默认50）',
-              default: 50
-            }
+              default: 50,
+            },
           },
-          required: []
-        }
+          required: [],
+        },
       },
       {
         name: 'get_compaction_threads',
@@ -3273,8 +3586,8 @@ class StarRocksCompactionExpert {
         inputSchema: {
           type: 'object',
           properties: {},
-          required: []
-        }
+          required: [],
+        },
       },
       {
         name: 'set_compaction_threads',
@@ -3284,15 +3597,15 @@ class StarRocksCompactionExpert {
           properties: {
             be_id: {
               type: 'string',
-              description: 'BE 节点 ID'
+              description: 'BE 节点 ID',
             },
             thread_count: {
               type: 'number',
-              description: '线程数量'
-            }
+              description: '线程数量',
+            },
           },
-          required: ['be_id', 'thread_count']
-        }
+          required: ['be_id', 'thread_count'],
+        },
       },
       {
         name: 'get_running_compaction_tasks',
@@ -3300,8 +3613,8 @@ class StarRocksCompactionExpert {
         inputSchema: {
           type: 'object',
           properties: {},
-          required: []
-        }
+          required: [],
+        },
       },
       {
         name: 'analyze_high_compaction_score',
@@ -3311,21 +3624,21 @@ class StarRocksCompactionExpert {
           properties: {
             database_name: {
               type: 'string',
-              description: '可选：目标数据库名称'
+              description: '可选：目标数据库名称',
             },
             table_name: {
               type: 'string',
-              description: '可选：目标表名称'
+              description: '可选：目标表名称',
             },
             include_details: {
               type: 'boolean',
               description: '是否包含详细分析数据',
-              default: true
-            }
+              default: true,
+            },
           },
-          required: []
-        }
-      }
+          required: [],
+        },
+      },
     ];
   }
 }
