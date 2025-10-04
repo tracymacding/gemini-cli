@@ -130,27 +130,29 @@ class StarRocksQueryPerfExpert {
    */
   async checkAuditLogEnabled(connection) {
     try {
-      // 查询审计日志配置
-      const [variables] = await connection.query(
-        "SHOW VARIABLES LIKE 'enable_audit_log'",
+      // 检查审计日志表是否存在
+      const [tables] = await connection.query(
+        "SHOW TABLES FROM starrocks_audit_db__ LIKE 'starrocks_audit_tbl__'",
       );
 
-      if (!variables || variables.length === 0) {
-        return {
-          enabled: false,
-          error: '无法查询审计日志配置，请检查数据库连接',
-        };
-      }
-
-      const auditLogEnabled =
-        variables[0].Value === 'true' || variables[0].Value === '1';
-
-      if (!auditLogEnabled) {
+      if (!tables || tables.length === 0) {
         return {
           enabled: false,
           error:
-            'Audit log 未开启，无法分析慢查询。请执行以下命令启用审计日志：\n' +
-            'SET GLOBAL enable_audit_log = true;',
+            'Audit log 表不存在。请先安装 Audit Log 插件。\n' +
+            '使用 install_audit_log 工具安装插件。',
+        };
+      }
+
+      // 检查表中是否有数据（简单验证）
+      try {
+        await connection.query(
+          'SELECT 1 FROM starrocks_audit_db__.starrocks_audit_tbl__ LIMIT 1',
+        );
+      } catch (error) {
+        return {
+          enabled: false,
+          error: `无法查询审计日志表: ${error.message}`,
         };
       }
 
@@ -161,7 +163,7 @@ class StarRocksQueryPerfExpert {
     } catch (error) {
       return {
         enabled: false,
-        error: `检查审计日志配置失败: ${error.message}`,
+        error: `检查审计日志失败: ${error.message}`,
       };
     }
   }
@@ -189,21 +191,21 @@ class StarRocksQueryPerfExpert {
 
       const query = `
         SELECT
-          QueryId,
-          QueryStartTime,
-          QueryTime,
-          ScanRows,
-          ScanBytes,
-          QueryMemBytes,
-          State,
-          Db,
-          User,
-          SUBSTRING(Stmt, 1, 200) as StmtPreview
-        FROM information_schema.audit_log
-        WHERE QueryStartTime >= '${timeAgoStr}'
-          AND QueryTime >= ${slowThresholdMs}
-          AND State = 'EOF'
-        ORDER BY QueryTime DESC
+          \`queryId\`,
+          \`timestamp\`,
+          \`queryTime\`,
+          \`scanRows\`,
+          \`scanBytes\`,
+          \`memCostBytes\`,
+          \`state\`,
+          \`db\`,
+          \`user\`,
+          SUBSTRING(\`stmt\`, 1, 200) as stmt_preview
+        FROM starrocks_audit_db__.starrocks_audit_tbl__
+        WHERE \`timestamp\` >= '${timeAgoStr}'
+          AND \`queryTime\` >= ${slowThresholdMs}
+          AND \`state\` = 'EOF'
+        ORDER BY \`queryTime\` DESC
         LIMIT ${limit}
       `;
 
@@ -215,19 +217,19 @@ class StarRocksQueryPerfExpert {
         slow_threshold_ms: slowThresholdMs,
         total_count: rows.length,
         queries: rows.map((row) => ({
-          query_id: row.QueryId,
-          start_time: row.QueryStartTime,
-          query_time_ms: row.QueryTime,
-          query_time_sec: (row.QueryTime / 1000).toFixed(2),
-          scan_rows: row.ScanRows,
-          scan_bytes: row.ScanBytes,
-          scan_gb: (row.ScanBytes / 1073741824).toFixed(2),
-          query_mem_bytes: row.QueryMemBytes,
-          query_mem_gb: (row.QueryMemBytes / 1073741824).toFixed(2),
-          state: row.State,
-          database: row.Db,
-          user: row.User,
-          stmt_preview: row.StmtPreview,
+          query_id: row.queryId,
+          start_time: row.timestamp,
+          query_time_ms: row.queryTime,
+          query_time_sec: (row.queryTime / 1000).toFixed(2),
+          scan_rows: row.scanRows,
+          scan_bytes: row.scanBytes,
+          scan_gb: (row.scanBytes / 1073741824).toFixed(2),
+          query_mem_bytes: row.memCostBytes,
+          query_mem_gb: (row.memCostBytes / 1073741824).toFixed(2),
+          state: row.state,
+          database: row.db,
+          user: row.user,
+          stmt_preview: row.stmt_preview,
         })),
       };
     } catch (error) {
@@ -779,6 +781,108 @@ class StarRocksQueryPerfExpert {
   }
 
   /**
+   * 检查是否开启了 Query Profile
+   */
+  async checkProfileEnabled(connection) {
+    try {
+      const [variables] = await connection.query(
+        "SHOW VARIABLES LIKE 'enable_profile'",
+      );
+
+      if (!variables || variables.length === 0) {
+        return {
+          enabled: false,
+          error: '无法查询 enable_profile 配置',
+        };
+      }
+
+      const profileEnabled =
+        variables[0].Value === 'true' || variables[0].Value === '1';
+
+      if (!profileEnabled) {
+        return {
+          enabled: false,
+          error:
+            'Query Profile 未开启。请先开启:\n' +
+            'SET GLOBAL enable_profile = true;',
+        };
+      }
+
+      return {
+        enabled: true,
+        error: null,
+      };
+    } catch (error) {
+      return {
+        enabled: false,
+        error: `检查 Profile 配置失败: ${error.message}`,
+      };
+    }
+  }
+
+  /**
+   * 获取查询的 Profile
+   */
+  async getQueryProfile(connection, queryId) {
+    try {
+      // 1. 检查 Profile 是否开启
+      const profileCheck = await this.checkProfileEnabled(connection);
+      if (!profileCheck.enabled) {
+        throw new Error(profileCheck.error);
+      }
+
+      // 2. 获取 Profile
+      const query = `SELECT get_query_profile('${queryId}') as profile`;
+      const [rows] = await connection.query(query);
+
+      if (!rows || rows.length === 0 || !rows[0].profile) {
+        throw new Error(
+          `无法获取 Query ID ${queryId} 的 Profile。可能原因:\n` +
+            '1. Query ID 不存在\n' +
+            '2. Query Profile 已过期（默认保留时间有限）\n' +
+            '3. Query 尚未执行完成',
+        );
+      }
+
+      const profile = rows[0].profile;
+
+      return {
+        success: true,
+        query_id: queryId,
+        profile: profile,
+        profile_size: profile.length,
+      };
+    } catch (error) {
+      throw new Error(`获取 Query Profile 失败: ${error.message}`);
+    }
+  }
+
+  /**
+   * 格式化 Query Profile 报告
+   */
+  formatQueryProfileReport(result) {
+    let report = '📊 StarRocks Query Profile\n';
+    report += '========================================\n\n';
+
+    report += `🔍 **Query ID**: ${result.query_id}\n`;
+    report += `📏 **Profile 大小**: ${(result.profile_size / 1024).toFixed(2)} KB\n\n`;
+
+    report += '📋 **Query Profile 内容**:\n';
+    report += '```\n';
+    report += result.profile;
+    report += '\n```\n\n';
+
+    report += '💡 **Profile 分析提示**:\n';
+    report += '   • 查看各个算子的耗时，找出性能瓶颈\n';
+    report += '   • 关注 RowsReturned 和 RowsProcessed，检查数据过滤效率\n';
+    report += '   • 检查 Join 算子的类型和数据量\n';
+    report += '   • 查看是否有数据倾斜问题\n';
+    report += '   • 关注内存使用情况\n';
+
+    return report;
+  }
+
+  /**
    * 格式化慢查询报告
    */
   formatSlowQueryReport(result, analysis) {
@@ -951,6 +1055,55 @@ class StarRocksQueryPerfExpert {
           };
         }
       },
+
+      get_query_profile: async (args, context) => {
+        console.log(
+          '🎯 获取 Query Profile 接收参数:',
+          JSON.stringify(args, null, 2),
+        );
+
+        const connection = context.connection;
+        const queryId = args.query_id;
+
+        if (!queryId) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: '❌ 错误: 缺少必需参数 query_id',
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        try {
+          // 获取 Query Profile
+          const result = await this.getQueryProfile(connection, queryId);
+
+          // 生成报告
+          const report = this.formatQueryProfileReport(result);
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: report,
+              },
+            ],
+          };
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `❌ 错误: ${error.message}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      },
     };
   }
 
@@ -1042,6 +1195,47 @@ class StarRocksQueryPerfExpert {
             },
           },
           required: [],
+        },
+      },
+      {
+        name: 'get_query_profile',
+        description: `📊 **获取查询 Profile**
+
+**功能**: 根据 Query ID 获取查询的详细执行 Profile，用于深入分析查询性能。
+
+**分析内容**:
+- ✅ 检查 Query Profile 是否开启
+- ✅ 获取指定 Query ID 的完整 Profile
+- ✅ 显示查询执行计划和各算子耗时
+- ✅ 提供 Profile 分析提示
+
+**Profile 包含信息**:
+- 查询执行计划树
+- 各算子的耗时和资源使用
+- 数据扫描量和过滤效率
+- Join 类型和数据分布
+- 内存使用情况
+- 数据倾斜检测
+
+**适用场景**:
+- 深入分析慢查询原因
+- 优化查询执行计划
+- 诊断性能瓶颈
+- 检查数据倾斜问题
+
+**注意**:
+- 需要开启 Query Profile (SET GLOBAL enable_profile = true)
+- Profile 有保留时间限制，过期后无法获取
+- Query 必须已执行完成`,
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query_id: {
+              type: 'string',
+              description: '查询的唯一 ID',
+            },
+          },
+          required: ['query_id'],
         },
       },
     ];

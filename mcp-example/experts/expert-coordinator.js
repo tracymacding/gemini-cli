@@ -20,6 +20,7 @@ import { StarRocksLogExpert } from './log-expert.js';
 import { StarRocksMemoryExpert } from './memory-expert.js';
 import { StarRocksQueryPerfExpert } from './query-perf-expert.js';
 import { StarRocksOperateExpert } from './operate-expert.js';
+import { StarRocksTableSchemaExpert } from './table-schema-expert.js';
 
 class StarRocksExpertCoordinator {
   constructor() {
@@ -33,6 +34,7 @@ class StarRocksExpertCoordinator {
       memory: new StarRocksMemoryExpert(),
       'query-perf': new StarRocksQueryPerfExpert(),
       operate: new StarRocksOperateExpert(),
+      'table-schema': new StarRocksTableSchemaExpert(),
     };
 
     // 工具处理器映射表: toolName -> {expert, handler}
@@ -689,9 +691,10 @@ class StarRocksExpertCoordinator {
         const connection = context.connection;
         const includeDetails = args.include_details || false;
         console.error('🚀 启动存储专家单独分析...');
-        const result = await this.experts.storage.analyze(connection, {
+        const result = await this.experts.storage.diagnose(
+          connection,
           includeDetails,
-        });
+        );
         return {
           _needsFormatting: true,
           _formatType: 'single_expert',

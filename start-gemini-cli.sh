@@ -200,8 +200,8 @@ load_env() {
 # 解析命令行参数
 parse_args() {
     POSITIONAL=()
-    MODEL=""
-    PROVIDER=""
+    MODEL="deepseek-chat"
+    PROVIDER="deepseek"
     PROMPT=""
 
     while [[ $# -gt 0 ]]; do

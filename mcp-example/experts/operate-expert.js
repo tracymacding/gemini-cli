@@ -60,7 +60,8 @@ export class StarRocksOperateExpert {
 **参数说明**:
 - plugin_path: 插件文件路径 (可选，如不提供则自动下载)
 - fe_host: FE 节点地址 (默认: 127.0.0.1)
-- fe_port: FE 节点端口 (默认: 9030)
+- fe_port: FE Query 端口 (MySQL 协议, 默认: 9030)
+- fe_http_port: FE HTTP 端口 (插件使用, 默认: 8030)
 - install_user: 安装用户 (默认: root)
 - install_password: 安装密码 (默认: '')
 - auto_download: 自动下载插件 (默认: true)
@@ -85,8 +86,13 @@ export class StarRocksOperateExpert {
             },
             fe_port: {
               type: 'number',
-              description: 'FE 节点端口',
+              description: 'FE Query 端口 (MySQL 协议)',
               default: 9030,
+            },
+            fe_http_port: {
+              type: 'number',
+              description: 'FE HTTP 端口 (插件使用)',
+              default: 8030,
             },
             install_user: {
               type: 'string',
@@ -263,41 +269,46 @@ export class StarRocksOperateExpert {
       // 创建审计日志表
       const createTableSQL = `
 CREATE TABLE IF NOT EXISTS starrocks_audit_db__.starrocks_audit_tbl__ (
-  queryId VARCHAR(64) COMMENT "Unique ID of the query",
-  timestamp DATETIME NOT NULL COMMENT "Query start time",
-  queryType VARCHAR(12) COMMENT "Query type (query, slow_query, connection)",
-  clientIp VARCHAR(32) COMMENT "Client IP",
-  user VARCHAR(64) COMMENT "Query username",
-  authorizedUser VARCHAR(64) COMMENT "Unique identifier of the user",
-  resourceGroup VARCHAR(64) COMMENT "Resource group name",
-  catalog VARCHAR(32) COMMENT "Catalog name",
-  db VARCHAR(96) COMMENT "Database where the query runs",
-  state VARCHAR(8) COMMENT "Query state (EOF, ERR, OK)",
-  errorCode VARCHAR(512) COMMENT "Error code",
-  queryTime BIGINT COMMENT "Query execution time (milliseconds)",
-  scanBytes BIGINT COMMENT "Number of bytes scanned",
-  scanRows BIGINT COMMENT "Number of rows scanned",
-  returnRows BIGINT COMMENT "Number of rows returned",
-  cpuCostNs BIGINT COMMENT "CPU time consumed (nanoseconds)",
-  memCostBytes BIGINT COMMENT "Memory consumed (bytes)",
-  stmtId INT COMMENT "Incremental ID of the SQL statement",
-  isQuery TINYINT COMMENT "Whether the SQL is a query (1 or 0)",
-  feIp VARCHAR(128) COMMENT "FE IP that executed the statement",
-  stmt VARCHAR(1048576) COMMENT "Original SQL statement",
-  digest VARCHAR(32) COMMENT "Fingerprint of slow SQL",
-  planCpuCosts DOUBLE COMMENT "CPU usage during query planning",
-  planMemCosts DOUBLE COMMENT "Memory usage during query planning"
-)
-DUPLICATE KEY (queryId, timestamp, queryType)
-PARTITION BY RANGE(timestamp) ()
-DISTRIBUTED BY HASH(queryId) BUCKETS 3
+  \`queryId\` VARCHAR(64) COMMENT "查询的唯一ID",
+  \`timestamp\` DATETIME NOT NULL COMMENT "查询开始时间",
+  \`queryType\` VARCHAR(12) COMMENT "查询类型（query, slow_query, connection）",
+  \`clientIp\` VARCHAR(32) COMMENT "客户端IP",
+  \`user\` VARCHAR(64) COMMENT "查询用户名",
+  \`authorizedUser\` VARCHAR(64) COMMENT "用户唯一标识，既user_identity",
+  \`resourceGroup\` VARCHAR(64) COMMENT "资源组名",
+  \`catalog\` VARCHAR(32) COMMENT "数据目录名",
+  \`db\` VARCHAR(96) COMMENT "查询所在数据库",
+  \`state\` VARCHAR(8) COMMENT "查询状态（EOF，ERR，OK）",
+  \`errorCode\` VARCHAR(512) COMMENT "错误码",
+  \`queryTime\` BIGINT COMMENT "查询执行时间（毫秒）",
+  \`scanBytes\` BIGINT COMMENT "查询扫描的字节数",
+  \`scanRows\` BIGINT COMMENT "查询扫描的记录行数",
+  \`returnRows\` BIGINT COMMENT "查询返回的结果行数",
+  \`cpuCostNs\` BIGINT COMMENT "查询CPU耗时（纳秒）",
+  \`memCostBytes\` BIGINT COMMENT "查询消耗内存（字节）",
+  \`stmtId\` INT COMMENT "SQL语句增量ID",
+  \`isQuery\` TINYINT COMMENT "SQL是否为查询（1或0）",
+  \`feIp\` VARCHAR(128) COMMENT "执行该语句的FE IP",
+  \`stmt\` VARCHAR(1048576) COMMENT "SQL原始语句",
+  \`digest\` VARCHAR(32) COMMENT "慢SQL指纹",
+  \`planCpuCosts\` DOUBLE COMMENT "查询规划阶段CPU占用（纳秒）",
+  \`planMemCosts\` DOUBLE COMMENT "查询规划阶段内存占用（字节）",
+  \`pendingTimeMs\` BIGINT COMMENT "查询在队列中等待的时间（毫秒）",
+  \`candidateMVs\` VARCHAR(65533) NULL COMMENT "候选MV列表",
+  \`hitMvs\` VARCHAR(65533) NULL COMMENT "命中MV列表",
+  \`warehouse\` VARCHAR(128) NULL COMMENT "仓库名称"
+) ENGINE = OLAP
+DUPLICATE KEY (\`queryId\`, \`timestamp\`, \`queryType\`)
+COMMENT "审计日志表"
+PARTITION BY RANGE (\`timestamp\`) ()
+DISTRIBUTED BY HASH (\`queryId\`) BUCKETS 3
 PROPERTIES (
-  "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p",
   "dynamic_partition.buckets" = "3",
+  "dynamic_partition.enable" = "true",
   "replication_num" = "3"
 )`;
 
@@ -404,7 +415,7 @@ PROPERTIES (
   async configureAuditLoaderPlugin(
     downloadDir,
     fe_host,
-    fe_port,
+    fe_http_port,
     install_user,
     install_password,
   ) {
@@ -425,7 +436,7 @@ PROPERTIES (
 
       // 3. 更新配置
       const config = {
-        frontend_host_port: `${fe_host || '127.0.0.1'}:${fe_port}`,
+        frontend_host_port: `${fe_host || '127.0.0.1'}:${fe_http_port}`,
         database: 'starrocks_audit_db__',
         table: 'starrocks_audit_tbl__',
         user: install_user,
@@ -469,6 +480,7 @@ PROPERTIES (
       plugin_path,
       fe_host,
       fe_port = 9030,
+      fe_http_port = 8030,
       install_user = 'root',
       install_password = '',
       auto_download = true, // 默认自动下载插件
@@ -554,7 +566,7 @@ PROPERTIES (
           finalPluginPath = await this.configureAuditLoaderPlugin(
             download_dir,
             fe_host,
-            fe_port,
+            fe_http_port,
             install_user,
             install_password,
           );
@@ -632,22 +644,6 @@ PROPERTIES (
           step: 'verify_installation',
           success: false,
           message: '插件安装验证失败，请检查 fe.log',
-        });
-      }
-
-      // 8. 启用审计日志
-      try {
-        await connection.query('SET GLOBAL enable_audit_log = true');
-        steps.push({
-          step: 'enable_audit_log',
-          success: true,
-          message: '已启用审计日志',
-        });
-      } catch (error) {
-        steps.push({
-          step: 'enable_audit_log',
-          success: false,
-          error: error.message,
         });
       }
 
