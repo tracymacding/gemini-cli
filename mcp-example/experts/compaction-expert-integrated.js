@@ -12,6 +12,7 @@
 /* eslint-disable no-undef, @typescript-eslint/no-unused-vars */
 
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { detectArchitectureType } from './common-utils.js';
 
 class StarRocksCompactionExpert {
   constructor() {
@@ -65,6 +66,28 @@ class StarRocksCompactionExpert {
       lake_compaction_max_tasks: 'FE参数，控制集群最大并发Compaction任务数',
       compact_threads: 'BE参数，控制单个BE节点的Compaction线程数',
     };
+  }
+
+  /**
+   * 检查集群是否为存算分离架构
+   * 如果不是，抛出错误
+   */
+  async checkSharedDataArchitecture(connection) {
+    const archInfo = await detectArchitectureType(connection);
+
+    if (archInfo.type !== 'shared_data') {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        `❌ Compaction 专家仅支持存算分离 (Shared-Data) 集群\n\n` +
+          `当前集群架构: ${archInfo.type === 'shared_nothing' ? '存算一体 (Shared-Nothing)' : '未知'}\n` +
+          `Run Mode: ${archInfo.run_mode || 'N/A'}\n\n` +
+          `💡 说明:\n` +
+          `  存算分离架构使用云原生存储 (如 S3)，Compaction 由独立的 Compaction 服务管理。\n` +
+          `  存算一体架构的 Compaction 机制不同，不适用此专家系统。`,
+      );
+    }
+
+    return archInfo;
   }
 
   /**
@@ -3471,6 +3494,10 @@ class StarRocksCompactionExpert {
     return {
       get_table_partitions_compaction_score: async (args, context) => {
         const connection = context.connection;
+
+        // 检查集群架构
+        await this.checkSharedDataArchitecture(connection);
+
         const data = {};
         await this.collectTableSpecificData(connection, data, {
           targetDatabase: args.database_name,
@@ -3505,6 +3532,10 @@ class StarRocksCompactionExpert {
       },
       get_high_compaction_partitions: async (args, context) => {
         const connection = context.connection;
+
+        // 检查集群架构
+        await this.checkSharedDataArchitecture(connection);
+
         const limit = args.limit || 50;
         const threshold = args.threshold || 100;
         return await this.getHighCompactionPartitions(
@@ -3515,19 +3546,35 @@ class StarRocksCompactionExpert {
       },
       get_compaction_threads: async (args, context) => {
         const connection = context.connection;
+
+        // 检查集群架构
+        await this.checkSharedDataArchitecture(connection);
+
         return await this.getCompactionThreads(connection);
       },
       set_compaction_threads: async (args, context) => {
         const connection = context.connection;
+
+        // 检查集群架构
+        await this.checkSharedDataArchitecture(connection);
+
         return await this.setCompactionThreads(connection, args.thread_count);
       },
       get_running_compaction_tasks: async (args, context) => {
         const connection = context.connection;
+
+        // 检查集群架构
+        await this.checkSharedDataArchitecture(connection);
+
         const includeDetails = args.include_details !== false;
         return await this.getRunningCompactionTasks(connection, includeDetails);
       },
       analyze_high_compaction_score: async (args, context) => {
         const connection = context.connection;
+
+        // 检查集群架构
+        await this.checkSharedDataArchitecture(connection);
+
         return await this.analyzeHighCompactionScore(
           connection,
           args.database_name || null,
