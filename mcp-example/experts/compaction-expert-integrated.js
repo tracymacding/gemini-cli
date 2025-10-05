@@ -3408,26 +3408,41 @@ class StarRocksCompactionExpert {
         );
       }
 
-      // 3. 统计未调度分区的 tablet 总数
+      // 3. 统计**系统所有**高 CS 分区的 tablet 总数 (不仅限于目标表)
       let unscheduled_tablet_num = 0;
+
+      // 查询系统中所有 CompactionScore > 10 的分区的 tablet 总数
+      const systemHighCSQuery = `
+        SELECT SUM(BUCKETS) as total_tablets
+        FROM information_schema.partitions_meta
+        WHERE MAX_CS > 10
+      `;
+      const [systemHighCSRows] = await connection.query(systemHighCSQuery);
+      unscheduled_tablet_num = systemHighCSRows?.[0]?.total_tablets || 0;
+
+      console.error(
+        `   → 系统所有高 CS 分区的 tablet 总数: ${unscheduled_tablet_num}`,
+      );
+
+      // 额外输出目标表的 tablet 数量（用于对比）
       if (stuckPartitions.length > 0) {
         const partitionNames = stuckPartitions
           .map((p) => `'${p.partition_name}'`)
           .join(',');
-        const tabletCountQuery = `
-          SELECT COUNT(DISTINCT TABLET_ID) as tablet_count
+        const targetTableQuery = `
+          SELECT SUM(BUCKETS) as tablet_count
           FROM information_schema.partitions_meta
           WHERE DB_NAME = ?
             AND TABLE_NAME = ?
             AND PARTITION_NAME IN (${partitionNames})
         `;
-        const [tabletCountRows] = await connection.query(tabletCountQuery, [
+        const [targetTableRows] = await connection.query(targetTableQuery, [
           database_name,
           table_name,
         ]);
-        unscheduled_tablet_num = tabletCountRows?.[0]?.tablet_count || 0;
+        const targetTableTablets = targetTableRows?.[0]?.tablet_count || 0;
         console.error(
-          `   → 未调度分区的 tablet 总数: ${unscheduled_tablet_num}`,
+          `   → 目标表 ${database_name}.${table_name} 的高 CS 分区 tablet 数: ${targetTableTablets}`,
         );
       }
 
@@ -3436,7 +3451,7 @@ class StarRocksCompactionExpert {
       const runningJobsQuery = `
         SELECT COUNT(DISTINCT TABLET_ID) as running_tablet_count
         FROM information_schema.be_cloud_native_compactions
-        WHERE STATE = 'RUNNING'
+        WHERE STATUS = 'RUNNING' OR STATUS = 'running'
       `;
       const [runningJobsRows] = await connection.query(runningJobsQuery);
       scheduled_tablet_num = runningJobsRows?.[0]?.running_tablet_count || 0;
@@ -3444,34 +3459,39 @@ class StarRocksCompactionExpert {
         `   → 正在执行的 compaction tablet 数量: ${scheduled_tablet_num}`,
       );
 
-      // 5. 获取 lake_compaction_max_tasks 参数配置
+      // 5. 获取 lake_compaction_max_tasks 参数配置（FE 配置）
       const maxTasksQuery = `
-        SELECT be_id, value
-        FROM information_schema.be_configs
-        WHERE name = 'lake_compaction_max_tasks'
+        ADMIN SHOW FRONTEND CONFIG LIKE 'lake_compaction_max_tasks'
       `;
       const [maxTasksRows] = await connection.query(maxTasksQuery);
 
       // 6. 统计 BE/CN 节点数量
-      const beCountQuery = `SELECT COUNT(DISTINCT be_id) as be_count FROM information_schema.be_configs`;
+      const beCountQuery = `SELECT COUNT(DISTINCT BE_ID) as be_count FROM information_schema.be_configs`;
       const [beCountRows] = await connection.query(beCountQuery);
       const beCount = beCountRows?.[0]?.be_count || 0;
 
       // 7. 计算实际的 max_tasks 容量
       let effective_max_tasks = 0;
       let is_adaptive = false;
+      let is_disabled = false;
       let max_tasks_config = '-1';
 
       if (maxTasksRows && maxTasksRows.length > 0) {
-        const firstConfig = maxTasksRows[0].value;
-        max_tasks_config = firstConfig;
+        const configValue = maxTasksRows[0].Value;
+        max_tasks_config = configValue;
 
-        if (firstConfig === '-1' || parseInt(firstConfig) === -1) {
-          // 自适应模式: 16 * BE 节点数
+        const configInt = parseInt(configValue);
+        if (configInt === 0) {
+          // 0 表示禁用 compaction
+          is_disabled = true;
+          effective_max_tasks = 0;
+        } else if (configInt === -1) {
+          // -1 表示自适应模式: 16 * BE 节点数
           is_adaptive = true;
           effective_max_tasks = 16 * beCount;
         } else {
-          effective_max_tasks = parseInt(firstConfig);
+          // 正数表示手动指定的容量
+          effective_max_tasks = configInt;
         }
       } else {
         // 默认值 -1 (自适应)
@@ -3480,7 +3500,7 @@ class StarRocksCompactionExpert {
       }
 
       console.error(
-        `   → lake_compaction_max_tasks: ${max_tasks_config} (实际容量: ${effective_max_tasks})`,
+        `   → lake_compaction_max_tasks: ${max_tasks_config} (实际容量: ${effective_max_tasks}${is_disabled ? ' - DISABLED' : is_adaptive ? ' - Adaptive' : ''})`,
       );
 
       // 8. 分析容量是否充足
@@ -3491,7 +3511,27 @@ class StarRocksCompactionExpert {
         total_tablet_demand > effective_max_tasks * 0.8; // 超过 80% 认为不足
 
       let capacity_analysis = null;
-      if (stuckPartitions.length > 0 && is_capacity_insufficient) {
+
+      // 如果 compaction 被禁用
+      if (stuckPartitions.length > 0 && is_disabled) {
+        capacity_analysis = {
+          is_insufficient: true,
+          is_disabled: true,
+          unscheduled_tablet_num,
+          scheduled_tablet_num,
+          total_tablet_demand,
+          effective_max_tasks: 0,
+          capacity_utilization: 'N/A (Disabled)',
+          recommended_max_tasks: Math.ceil(total_tablet_demand * 1.5),
+          severity: 'CRITICAL',
+          message: `Compaction 已被禁用 (lake_compaction_max_tasks = 0)，所有分区都无法执行 compaction`,
+          recommendation: `立即启用 compaction，建议设置 lake_compaction_max_tasks = ${Math.ceil(total_tablet_demand * 1.5)} 或 -1 (自适应)`,
+          example_command: `ADMIN SET FRONTEND CONFIG ("lake_compaction_max_tasks" = "-1");  -- 启用自适应模式`,
+        };
+        console.error(
+          `   🚨 CRITICAL: Compaction 已被禁用！所有分区无法执行 compaction`,
+        );
+      } else if (stuckPartitions.length > 0 && is_capacity_insufficient) {
         const recommended_max_tasks = Math.ceil(total_tablet_demand * 1.5); // 建议值为需求的 1.5 倍
         capacity_analysis = {
           is_insufficient: true,
@@ -3511,7 +3551,7 @@ class StarRocksCompactionExpert {
           recommendation: is_adaptive
             ? `当前为自适应模式 (${beCount} 个节点 × 16 = ${effective_max_tasks})，建议手动设置 lake_compaction_max_tasks = ${recommended_max_tasks}`
             : `当前配置 lake_compaction_max_tasks = ${max_tasks_config}，建议调整为 ${recommended_max_tasks}`,
-          example_command: `UPDATE information_schema.be_configs SET value = '${recommended_max_tasks}' WHERE name = 'lake_compaction_max_tasks';`,
+          example_command: `ADMIN SET FRONTEND CONFIG ("lake_compaction_max_tasks" = "${recommended_max_tasks}");`,
         };
         console.error(
           `   ⚠️  容量不足: 需求 ${total_tablet_demand} > 容量 ${effective_max_tasks} (利用率 ${(capacity_utilization * 100).toFixed(1)}%)`,
@@ -3590,6 +3630,8 @@ class StarRocksCompactionExpert {
       let unfinishedTasks = 0; // PROGRESS != 100
 
       const unfinishedTaskDetails = [];
+      const runningTaskDetails = []; // 正在运行的任务 (有进度)
+      const pendingTaskDetails = []; // 等待中的任务 (未开始)
       const completedTaskProfiles = []; // 保存已完成任务的 Profile 分析
       const beRunsMap = {}; // 统计每个 BE 节点的 RUNS 信息
 
@@ -3645,11 +3687,55 @@ class StarRocksCompactionExpert {
 
           if (!startTime) {
             pendingTasks++;
+
+            // 计算排队等待时间 (从 job 开始时间到现在)
+            let waitTimeMin = 0;
+            let waitTimeDisplay = 'N/A';
+
+            if (job.start_time) {
+              try {
+                const jobStartTime = new Date(job.start_time);
+                const now = new Date();
+                const waitTimeMs = now - jobStartTime;
+                waitTimeMin = parseFloat((waitTimeMs / 1000 / 60).toFixed(1));
+                waitTimeDisplay = `${waitTimeMin.toFixed(1)} 分钟`;
+              } catch (error) {
+                // 日期解析失败,使用默认值
+                console.error(
+                  `   ⚠️ 解析 job.start_time 失败: ${job.start_time}`,
+                );
+              }
+            }
+
+            pendingTaskDetails.push({
+              be_id: beId,
+              tablet_id: task.TABLET_ID,
+              runs: runs,
+              wait_time_min: waitTimeMin,
+              wait_time_display: waitTimeDisplay,
+            });
           } else {
             runningTasks++;
+
+            // 计算运行时长
+            const startTimeDate = new Date(startTime);
+            const now = new Date();
+            const runningTimeMs = now - startTimeDate;
+            const runningTimeMin = (runningTimeMs / 1000 / 60).toFixed(1);
+
+            runningTaskDetails.push({
+              be_id: beId,
+              tablet_id: task.TABLET_ID,
+              runs: runs,
+              start_time: startTime,
+              progress: progress,
+              progress_display: `${progress}%`,
+              running_time_min: parseFloat(runningTimeMin),
+              running_time_display: `${runningTimeMin} 分钟`,
+            });
           }
 
-          // 收集未完成任务的详细信息
+          // 收集未完成任务的详细信息 (保留原有字段以保持兼容性)
           unfinishedTaskDetails.push({
             be_id: beId,
             tablet_id: task.TABLET_ID,
@@ -3757,7 +3843,44 @@ class StarRocksCompactionExpert {
         );
       });
 
-      // 5. 返回分析结果
+      // 5. 计算统计信息
+      let runningTaskStats = null;
+      if (runningTaskDetails.length > 0) {
+        const avgProgress =
+          runningTaskDetails.reduce((sum, t) => sum + t.progress, 0) /
+          runningTaskDetails.length;
+        const avgRunningTime =
+          runningTaskDetails.reduce((sum, t) => sum + t.running_time_min, 0) /
+          runningTaskDetails.length;
+        const maxRunningTime = Math.max(
+          ...runningTaskDetails.map((t) => t.running_time_min),
+        );
+
+        runningTaskStats = {
+          count: runningTaskDetails.length,
+          avg_progress: avgProgress.toFixed(1) + '%',
+          avg_running_time_min: avgRunningTime.toFixed(1),
+          max_running_time_min: maxRunningTime.toFixed(1),
+        };
+      }
+
+      let pendingTaskStats = null;
+      if (pendingTaskDetails.length > 0) {
+        const avgWaitTime =
+          pendingTaskDetails.reduce((sum, t) => sum + t.wait_time_min, 0) /
+          pendingTaskDetails.length;
+        const maxWaitTime = Math.max(
+          ...pendingTaskDetails.map((t) => t.wait_time_min),
+        );
+
+        pendingTaskStats = {
+          count: pendingTaskDetails.length,
+          avg_wait_time_min: avgWaitTime.toFixed(1),
+          max_wait_time_min: maxWaitTime.toFixed(1),
+        };
+      }
+
+      // 6. 返回分析结果
       return {
         bucket_count: bucketCount,
         total_tasks: totalTasks,
@@ -3768,6 +3891,10 @@ class StarRocksCompactionExpert {
         completion_ratio:
           ((completedTasks / totalTasks) * 100).toFixed(1) + '%',
         unfinished_task_samples: unfinishedTaskDetails.slice(0, 5), // 最多显示 5 个样本
+        running_task_details: runningTaskDetails.slice(0, 10), // 正在运行的任务 (最多 10 个)
+        running_task_stats: runningTaskStats, // 运行任务的统计信息
+        pending_task_details: pendingTaskDetails.slice(0, 10), // 等待中的任务 (最多 10 个)
+        pending_task_stats: pendingTaskStats, // 等待任务的统计信息
         profile_analysis: profileAnalysis, // 已完成任务的 Profile 分析
         be_runs_analysis: beRunsAnalysis, // 每个 BE 节点的 RUNS 分析
       };
@@ -3811,6 +3938,9 @@ class StarRocksCompactionExpert {
 
       // 2. 根据 database_name 和 table_name 过滤 jobs（简单字符串匹配）
       console.error('🔍 步骤2: 根据 database/table 过滤 Jobs...');
+      console.error(
+        `   [DEBUG] 过滤参数: database_name="${database_name}", table_name="${table_name}"`,
+      );
       let filteredJobs = allJobs;
 
       if (database_name || table_name) {
@@ -3824,6 +3954,12 @@ class StarRocksCompactionExpert {
         console.error(
           `   → 过滤后剩余 ${filteredJobs.length} 个 Jobs (原始: ${allJobs.length})`,
         );
+        if (filteredJobs.length > 0 && filteredJobs.length <= 3) {
+          console.error(
+            `   [DEBUG] 过滤后的 Jobs:`,
+            filteredJobs.map((j) => `${j.database}.${j.table}`),
+          );
+        }
 
         // 输出示例
         if (filteredJobs.length > 0) {
@@ -3975,6 +4111,9 @@ class StarRocksCompactionExpert {
 
       // 7. 检查是否有高 CS 分区但没有 Compaction Job
       let stuckPartitions = null;
+      console.error(
+        `🔍 [DEBUG] 步骤7判断条件: database_name=${database_name}, table_name=${table_name}, filteredJobs.length=${filteredJobs.length}`,
+      );
       if (database_name && table_name && filteredJobs.length === 0) {
         console.error('🔍 步骤7: 未找到 Compaction Job, 检查高 CS 分区...');
         stuckPartitions = await this.checkStuckPartitionsWithHighCS(

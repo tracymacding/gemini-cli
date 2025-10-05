@@ -163,6 +163,58 @@ export class StarRocksOperateExpert {
           },
         },
       },
+      {
+        name: 'set_compact_threads',
+        description: `调整存算分离架构下 BE/CN 节点的 Compact 工作线程数
+
+**功能**:
+- ✅ 查询当前所有 BE/CN 节点的 compact 线程配置
+- ✅ 支持单个节点或批量调整线程数
+- ✅ 自动验证参数合理性 (建议范围: CPU cores * 0.25 ~ 0.5)
+- ✅ 支持预览模式，不实际执行修改
+
+**适用场景**:
+- Compaction 任务执行缓慢，需要增加线程数
+- 系统负载过高，需要降低 compaction 线程数
+- 集群扩容后，统一调整所有节点的线程配置
+
+**参数说明**:
+- be_id: BE/CN 节点 ID (可选，不指定则调整所有节点)
+- thread_count: 目标线程数 (必填)
+- dry_run: 预览模式，不实际执行 (默认: false)
+- auto_validate: 自动验证合理性 (默认: true)
+
+**返回数据**:
+- success: 是否执行成功
+- modified_nodes: 修改的节点列表
+- current_config: 当前配置
+- new_config: 新配置
+- validation: 参数验证结果`,
+        inputSchema: {
+          type: 'object',
+          properties: {
+            be_id: {
+              type: 'string',
+              description: 'BE/CN 节点 ID (不指定则调整所有节点)',
+            },
+            thread_count: {
+              type: 'number',
+              description: '目标线程数',
+            },
+            dry_run: {
+              type: 'boolean',
+              description: '预览模式，不实际执行修改',
+              default: false,
+            },
+            auto_validate: {
+              type: 'boolean',
+              description: '自动验证参数合理性',
+              default: true,
+            },
+          },
+          required: ['thread_count'],
+        },
+      },
     ];
   }
 
@@ -201,6 +253,20 @@ export class StarRocksOperateExpert {
       uninstall_audit_log: async (args) => {
         const result = await this.uninstallAuditLog(args);
         const report = this.formatUninstallReport(result);
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: report,
+            },
+          ],
+          isError: !result.success,
+        };
+      },
+      set_compact_threads: async (args, context) => {
+        const result = await this.setCompactThreads(context.connection, args);
+        const report = this.formatCompactThreadsReport(result);
 
         return {
           content: [
@@ -1028,6 +1094,316 @@ PROPERTIES (
         '   如需删除数据，请运行: DROP DATABASE starrocks_audit_db__;\n';
     } else {
       report += '🗑️ **数据已删除**: 审计日志数据库和表已删除\n';
+    }
+
+    return report;
+  }
+
+  /**
+   * 设置 Compact 线程数
+   */
+  async setCompactThreads(connection, args) {
+    const {
+      be_id = null,
+      thread_count,
+      dry_run = false,
+      auto_validate = true,
+    } = args;
+
+    try {
+      console.error('🔧 开始调整 Compact 线程配置...');
+
+      // 1. 查询当前所有节点的配置
+      // 先获取基本配置
+      const configQuery = `
+        SELECT BE_ID, value as current_threads
+        FROM information_schema.be_configs
+        WHERE name = 'compact_threads'
+        ${be_id ? `AND BE_ID = ${be_id}` : ''}
+        ORDER BY BE_ID
+      `;
+
+      const [configRows] = await connection.query(configQuery);
+
+      if (!configRows || configRows.length === 0) {
+        return {
+          success: false,
+          message: be_id
+            ? `未找到 BE_ID=${be_id} 的节点`
+            : '未找到任何 BE/CN 节点',
+        };
+      }
+
+      // 获取节点详细信息 (使用 SHOW BACKENDS)
+      const [backends] = await connection.query('SHOW BACKENDS');
+      const backendMap = new Map();
+      backends.forEach((be) => {
+        // 确保 key 是 Number 类型
+        const beId = parseInt(be.BackendId);
+        backendMap.set(beId, {
+          host: be.IP,
+          cpu_cores: parseInt(be.CpuCores) || 0,
+        });
+      });
+
+      const currentConfig = configRows.map((config) => {
+        const beId = parseInt(config.BE_ID);
+        const beInfo = backendMap.get(beId) || {};
+        return {
+          BE_ID: config.BE_ID,
+          current_threads: config.current_threads,
+          host: beInfo.host || 'unknown',
+          cpu_cores: beInfo.cpu_cores || 0,
+        };
+      });
+
+      console.error(`   → 找到 ${currentConfig.length} 个节点`);
+
+      // 2. 验证参数合理性
+      const validation = {
+        passed: true,
+        warnings: [],
+        recommendations: [],
+      };
+
+      if (auto_validate) {
+        for (const node of currentConfig) {
+          const cpuCores = parseInt(node.cpu_cores) || 0;
+          const recommendedMin = Math.floor(cpuCores * 0.25);
+          const recommendedMax = Math.ceil(cpuCores * 0.5);
+
+          if (cpuCores > 0) {
+            if (thread_count < recommendedMin) {
+              validation.warnings.push(
+                `节点 ${node.BE_ID} (${node.host}): 线程数 ${thread_count} 低于推荐最小值 ${recommendedMin} (CPU ${cpuCores} × 0.25)`,
+              );
+            } else if (thread_count > recommendedMax) {
+              validation.warnings.push(
+                `节点 ${node.BE_ID} (${node.host}): 线程数 ${thread_count} 高于推荐最大值 ${recommendedMax} (CPU ${cpuCores} × 0.5)`,
+              );
+            }
+
+            validation.recommendations.push({
+              be_id: node.BE_ID,
+              host: node.host,
+              cpu_cores: cpuCores,
+              current_threads: parseInt(node.current_threads),
+              recommended_range: `${recommendedMin}-${recommendedMax}`,
+              target_threads: thread_count,
+            });
+          }
+        }
+
+        if (validation.warnings.length > 0) {
+          console.error('   ⚠️  发现参数验证警告:');
+          validation.warnings.forEach((w) => console.error(`      ${w}`));
+        }
+      }
+
+      // 3. 执行修改 (或预览)
+      const modifications = [];
+
+      if (dry_run) {
+        console.error('   🔍 [预览模式] 不会实际执行修改');
+
+        for (const node of currentConfig) {
+          modifications.push({
+            be_id: node.BE_ID,
+            host: node.host,
+            current_threads: parseInt(node.current_threads),
+            new_threads: thread_count,
+            will_change: parseInt(node.current_threads) !== thread_count,
+            action: 'preview',
+          });
+        }
+      } else {
+        console.error('   ✅ 开始执行修改...');
+
+        for (const node of currentConfig) {
+          const currentThreads = parseInt(node.current_threads);
+
+          if (currentThreads === thread_count) {
+            console.error(
+              `   → 节点 ${node.BE_ID} (${node.host}): 已经是 ${thread_count} 线程，跳过`,
+            );
+            modifications.push({
+              be_id: node.BE_ID,
+              host: node.host,
+              current_threads: currentThreads,
+              new_threads: thread_count,
+              will_change: false,
+              action: 'skipped',
+              message: '已经是目标值',
+            });
+            continue;
+          }
+
+          try {
+            // 使用 UPDATE be_configs 修改配置
+            const updateQuery = `
+              UPDATE information_schema.be_configs
+              SET value = '${thread_count}'
+              WHERE BE_ID = ${node.BE_ID} AND name = 'compact_threads'
+            `;
+            await connection.query(updateQuery);
+
+            console.error(
+              `   ✅ 节点 ${node.BE_ID} (${node.host}): ${currentThreads} → ${thread_count} 线程`,
+            );
+
+            modifications.push({
+              be_id: node.BE_ID,
+              host: node.host,
+              current_threads: currentThreads,
+              new_threads: thread_count,
+              will_change: true,
+              action: 'modified',
+              success: true,
+            });
+          } catch (error) {
+            console.error(
+              `   ❌ 节点 ${node.BE_ID} (${node.host}): 修改失败 - ${error.message}`,
+            );
+
+            modifications.push({
+              be_id: node.BE_ID,
+              host: node.host,
+              current_threads: currentThreads,
+              new_threads: thread_count,
+              will_change: true,
+              action: 'failed',
+              success: false,
+              error: error.message,
+            });
+          }
+        }
+      }
+
+      // 4. 统计结果
+      const modifiedCount = modifications.filter(
+        (m) => m.action === 'modified',
+      ).length;
+      const failedCount = modifications.filter(
+        (m) => m.action === 'failed',
+      ).length;
+      const skippedCount = modifications.filter(
+        (m) => m.action === 'skipped',
+      ).length;
+
+      return {
+        success: dry_run || failedCount === 0,
+        dry_run,
+        message: dry_run
+          ? `预览模式: 将修改 ${modifications.filter((m) => m.will_change).length} 个节点`
+          : `成功修改 ${modifiedCount} 个节点${failedCount > 0 ? `, ${failedCount} 个失败` : ''}${skippedCount > 0 ? `, ${skippedCount} 个跳过` : ''}`,
+        target_thread_count: thread_count,
+        total_nodes: currentConfig.length,
+        modified_count: modifiedCount,
+        failed_count: failedCount,
+        skipped_count: skippedCount,
+        modifications,
+        validation,
+      };
+    } catch (error) {
+      console.error(`❌ 调整 Compact 线程失败: ${error.message}`);
+      return {
+        success: false,
+        message: `调整失败: ${error.message}`,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * 格式化 Compact 线程调整报告
+   */
+  formatCompactThreadsReport(data) {
+    let report = '# 🔧 Compact 线程配置调整报告\n\n';
+
+    if (!data.success) {
+      report += `## ❌ 执行失败\n\n`;
+      report += `**错误信息**: ${data.message}\n`;
+      return report;
+    }
+
+    // 基本信息
+    report += `## 📊 执行摘要\n\n`;
+    report += `- **模式**: ${data.dry_run ? '🔍 预览模式 (未实际修改)' : '✅ 执行模式'}\n`;
+    report += `- **目标线程数**: ${data.target_thread_count}\n`;
+    report += `- **总节点数**: ${data.total_nodes}\n`;
+
+    if (!data.dry_run) {
+      report += `- **修改成功**: ${data.modified_count} 个节点\n`;
+      if (data.failed_count > 0) {
+        report += `- **修改失败**: ${data.failed_count} 个节点\n`;
+      }
+      if (data.skipped_count > 0) {
+        report += `- **跳过**: ${data.skipped_count} 个节点 (已经是目标值)\n`;
+      }
+    }
+
+    report += '\n';
+
+    // 验证警告
+    if (
+      data.validation &&
+      data.validation.warnings &&
+      data.validation.warnings.length > 0
+    ) {
+      report += `## ⚠️ 参数验证警告\n\n`;
+      data.validation.warnings.forEach((warning) => {
+        report += `- ${warning}\n`;
+      });
+      report += '\n';
+    }
+
+    // 节点详情
+    report += `## 📋 节点修改详情\n\n`;
+    report += '| BE_ID | 主机 | 当前线程 | 目标线程 | 状态 |\n';
+    report += '|-------|------|----------|----------|------|\n';
+
+    for (const mod of data.modifications) {
+      const status =
+        mod.action === 'modified'
+          ? '✅ 已修改'
+          : mod.action === 'failed'
+            ? `❌ 失败`
+            : mod.action === 'skipped'
+              ? '⏭️ 跳过'
+              : '🔍 预览';
+
+      report += `| ${mod.be_id} | ${mod.host || 'N/A'} | ${mod.current_threads} | ${mod.new_threads} | ${status} |\n`;
+    }
+
+    report += '\n';
+
+    // 推荐配置
+    if (
+      data.validation &&
+      data.validation.recommendations &&
+      data.validation.recommendations.length > 0
+    ) {
+      report += `## 💡 配置建议\n\n`;
+      report += '| BE_ID | 主机 | CPU核数 | 当前线程 | 推荐范围 | 目标线程 |\n';
+      report += '|-------|------|---------|----------|----------|----------|\n';
+
+      for (const rec of data.validation.recommendations) {
+        report += `| ${rec.be_id} | ${rec.host} | ${rec.cpu_cores} | ${rec.current_threads} | ${rec.recommended_range} | ${rec.target_threads} |\n`;
+      }
+
+      report += '\n';
+    }
+
+    // 验证命令
+    if (!data.dry_run && data.modified_count > 0) {
+      report += `## ✅ 验证配置\n\n`;
+      report += '执行以下 SQL 验证配置是否生效:\n\n';
+      report += '```sql\n';
+      report += `SELECT BE_ID, value as compact_threads\n`;
+      report += `FROM information_schema.be_configs\n`;
+      report += `WHERE name = 'compact_threads'\n`;
+      report += `ORDER BY BE_ID;\n`;
+      report += '```\n';
     }
 
     return report;
