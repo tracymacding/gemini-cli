@@ -2032,6 +2032,125 @@ class StarRocksCompactionExpert {
     };
   }
 
+  calculateClusterTaskUtilization(data) {
+    // 计算集群任务利用率
+    const runningTasks = data.running_tasks?.task_count || 0;
+    const clusterStats = data.cluster_stats || {};
+    const aliveNodes = clusterStats.alive_nodes || 1;
+    const threadStats = data.thread_config?.cluster_stats || {};
+    const totalThreads = threadStats.total_threads || 1;
+
+    const tasksPerNode = aliveNodes > 0 ? runningTasks / aliveNodes : 0;
+    const utilizationPercent = Math.min(
+      (runningTasks / totalThreads) * 100,
+      100,
+    );
+
+    return {
+      utilization_percent: Math.round(utilizationPercent * 100) / 100,
+      running_tasks: runningTasks,
+      total_threads: totalThreads,
+      tasks_per_node: Math.round(tasksPerNode * 100) / 100,
+      capacity_status:
+        utilizationPercent > 80
+          ? 'HIGH'
+          : utilizationPercent > 50
+            ? 'MEDIUM'
+            : 'LOW',
+    };
+  }
+
+  calculateTaskEfficiencyRating(historicalPerf) {
+    // 基于历史性能数据计算任务执行效率评级
+    const successRate = historicalPerf.success_rate || 0;
+    const avgDuration = historicalPerf.avg_duration_hours || 0;
+
+    let rating = 'POOR';
+    let score = 0;
+
+    // 成功率权重：60%
+    if (successRate >= 95) score += 60;
+    else if (successRate >= 90) score += 50;
+    else if (successRate >= 80) score += 40;
+    else if (successRate >= 70) score += 30;
+    else score += 20;
+
+    // 执行时长权重：40%
+    if (avgDuration <= 0.5)
+      score += 40; // 30分钟以内
+    else if (avgDuration <= 1)
+      score += 35; // 1小时以内
+    else if (avgDuration <= 2)
+      score += 30; // 2小时以内
+    else if (avgDuration <= 4)
+      score += 20; // 4小时以内
+    else score += 10;
+
+    // 评级判定
+    if (score >= 90) rating = 'EXCELLENT';
+    else if (score >= 75) rating = 'GOOD';
+    else if (score >= 60) rating = 'FAIR';
+    else if (score >= 40) rating = 'POOR';
+    else rating = 'CRITICAL';
+
+    return {
+      rating: rating,
+      score: score,
+      success_rate: successRate,
+      avg_duration_hours: avgDuration,
+    };
+  }
+
+  generateTaskOptimizationSuggestions(taskStats, historicalPerf) {
+    // 生成任务优化建议
+    const suggestions = [];
+    const successRate = historicalPerf.success_rate || 0;
+    const avgDuration = historicalPerf.avg_duration_hours || 0;
+    const avgTasksPerNode = taskStats.avg_tasks_per_node || 0;
+
+    // 成功率相关建议
+    if (successRate < 90) {
+      suggestions.push({
+        type: 'success_rate_improvement',
+        priority: 'HIGH',
+        suggestion: `任务成功率 ${successRate.toFixed(1)}% 偏低，建议检查失败原因并优化`,
+        expected_improvement: '提升10-20%成功率',
+      });
+    }
+
+    // 执行时长相关建议
+    if (avgDuration > 2) {
+      suggestions.push({
+        type: 'duration_optimization',
+        priority: 'MEDIUM',
+        suggestion: `平均任务时长 ${avgDuration.toFixed(2)} 小时较长，建议优化Compaction策略或增加线程`,
+        expected_improvement: '缩短30-50%执行时间',
+      });
+    }
+
+    // 负载均衡相关建议
+    if (taskStats.max_tasks_per_node > avgTasksPerNode * 2) {
+      suggestions.push({
+        type: 'load_balancing',
+        priority: 'MEDIUM',
+        suggestion: '节点间任务分布不均，建议检查tablet分布或调整副本策略',
+        expected_improvement: '提升20-30%整体吞吐量',
+      });
+    }
+
+    // 如果表现良好，提供保持建议
+    if (successRate >= 95 && avgDuration <= 1 && suggestions.length === 0) {
+      suggestions.push({
+        type: 'maintain_status',
+        priority: 'LOW',
+        suggestion: '当前任务执行效率良好，建议保持现有配置并持续监控',
+        expected_improvement: '维持当前性能水平',
+      });
+    }
+
+    return suggestions;
+  }
+
   calculateCompactionGrowthProjection(compactionData) {
     // 基于当前数据预测增长趋势（简化版本）
     const csStats = compactionData.cs_statistics || {};
@@ -3202,6 +3321,3429 @@ class StarRocksCompactionExpert {
   }
 
   /**
+   * 检查高 CS 分区是否长时间未执行 Compaction
+   * @param {Connection} connection - 数据库连接
+   * @param {string} database_name - 数据库名
+   * @param {string} table_name - 表名
+   * @returns {Object} 卡住的分区信息
+   */
+  async checkStuckPartitionsWithHighCS(connection, database_name, table_name) {
+    try {
+      // 1. 查询该表的所有分区的 Compaction Score
+      const csQuery = `
+        SELECT
+          PARTITION_NAME,
+          MAX_CS as compaction_score
+        FROM information_schema.partitions_meta
+        WHERE DB_NAME = ?
+          AND TABLE_NAME = ?
+          AND MAX_CS > 10
+        ORDER BY MAX_CS DESC
+      `;
+      const [csRows] = await connection.query(csQuery, [
+        database_name,
+        table_name,
+      ]);
+
+      if (!csRows || csRows.length === 0) {
+        return {
+          message: '未找到高 CS 分区 (CS > 10)',
+          partitions: [],
+        };
+      }
+
+      console.error(`   → 找到 ${csRows.length} 个高 CS 分区 (CS > 10)`);
+
+      // 2. 检查每个分区的最后版本生效时间
+      const stuckPartitions = [];
+      const now = new Date();
+      const thresholdMinutes = 30;
+
+      for (const row of csRows) {
+        const partitionName = row.PARTITION_NAME;
+        const cs = row.compaction_score || row.MAX_CS;
+
+        // 查询该分区的最后版本生效时间
+        const versionQuery = `
+          SELECT VISIBLE_VERSION_TIME
+          FROM information_schema.partitions_meta
+          WHERE DB_NAME = ?
+            AND TABLE_NAME = ?
+            AND PARTITION_NAME = ?
+        `;
+        const [versionRows] = await connection.query(versionQuery, [
+          database_name,
+          table_name,
+          partitionName,
+        ]);
+
+        if (versionRows && versionRows.length > 0) {
+          const visibleVersionTime = versionRows[0].VISIBLE_VERSION_TIME;
+
+          if (visibleVersionTime) {
+            const lastVersionTime = new Date(visibleVersionTime);
+            const minutesSinceLastVersion =
+              (now - lastVersionTime) / (1000 * 60);
+
+            // 如果距离上次版本生效时间超过 30 分钟,认为是卡住了
+            if (minutesSinceLastVersion > thresholdMinutes) {
+              stuckPartitions.push({
+                partition_name: partitionName,
+                compaction_score: cs,
+                last_version_time: visibleVersionTime,
+                minutes_since_last_version: minutesSinceLastVersion.toFixed(1),
+                severity: cs > 100 ? 'HIGH' : cs > 50 ? 'MEDIUM' : 'LOW',
+              });
+            }
+          }
+        }
+      }
+
+      // 按 CS 降序排序
+      stuckPartitions.sort((a, b) => b.compaction_score - a.compaction_score);
+
+      if (stuckPartitions.length > 0) {
+        console.error(
+          `   → 其中 ${stuckPartitions.length} 个分区超过 ${thresholdMinutes} 分钟未执行 Compaction`,
+        );
+      }
+
+      // 3. 统计未调度分区的 tablet 总数
+      let unscheduled_tablet_num = 0;
+      if (stuckPartitions.length > 0) {
+        const partitionNames = stuckPartitions
+          .map((p) => `'${p.partition_name}'`)
+          .join(',');
+        const tabletCountQuery = `
+          SELECT COUNT(DISTINCT TABLET_ID) as tablet_count
+          FROM information_schema.partitions_meta
+          WHERE DB_NAME = ?
+            AND TABLE_NAME = ?
+            AND PARTITION_NAME IN (${partitionNames})
+        `;
+        const [tabletCountRows] = await connection.query(tabletCountQuery, [
+          database_name,
+          table_name,
+        ]);
+        unscheduled_tablet_num = tabletCountRows?.[0]?.tablet_count || 0;
+        console.error(
+          `   → 未调度分区的 tablet 总数: ${unscheduled_tablet_num}`,
+        );
+      }
+
+      // 4. 统计正在执行的 compaction job 的 tablet 数量
+      let scheduled_tablet_num = 0;
+      const runningJobsQuery = `
+        SELECT COUNT(DISTINCT TABLET_ID) as running_tablet_count
+        FROM information_schema.be_cloud_native_compactions
+        WHERE STATE = 'RUNNING'
+      `;
+      const [runningJobsRows] = await connection.query(runningJobsQuery);
+      scheduled_tablet_num = runningJobsRows?.[0]?.running_tablet_count || 0;
+      console.error(
+        `   → 正在执行的 compaction tablet 数量: ${scheduled_tablet_num}`,
+      );
+
+      // 5. 获取 lake_compaction_max_tasks 参数配置
+      const maxTasksQuery = `
+        SELECT be_id, value
+        FROM information_schema.be_configs
+        WHERE name = 'lake_compaction_max_tasks'
+      `;
+      const [maxTasksRows] = await connection.query(maxTasksQuery);
+
+      // 6. 统计 BE/CN 节点数量
+      const beCountQuery = `SELECT COUNT(DISTINCT be_id) as be_count FROM information_schema.be_configs`;
+      const [beCountRows] = await connection.query(beCountQuery);
+      const beCount = beCountRows?.[0]?.be_count || 0;
+
+      // 7. 计算实际的 max_tasks 容量
+      let effective_max_tasks = 0;
+      let is_adaptive = false;
+      let max_tasks_config = '-1';
+
+      if (maxTasksRows && maxTasksRows.length > 0) {
+        const firstConfig = maxTasksRows[0].value;
+        max_tasks_config = firstConfig;
+
+        if (firstConfig === '-1' || parseInt(firstConfig) === -1) {
+          // 自适应模式: 16 * BE 节点数
+          is_adaptive = true;
+          effective_max_tasks = 16 * beCount;
+        } else {
+          effective_max_tasks = parseInt(firstConfig);
+        }
+      } else {
+        // 默认值 -1 (自适应)
+        is_adaptive = true;
+        effective_max_tasks = 16 * beCount;
+      }
+
+      console.error(
+        `   → lake_compaction_max_tasks: ${max_tasks_config} (实际容量: ${effective_max_tasks})`,
+      );
+
+      // 8. 分析容量是否充足
+      const total_tablet_demand = unscheduled_tablet_num + scheduled_tablet_num;
+      const capacity_utilization =
+        effective_max_tasks > 0 ? total_tablet_demand / effective_max_tasks : 0;
+      const is_capacity_insufficient =
+        total_tablet_demand > effective_max_tasks * 0.8; // 超过 80% 认为不足
+
+      let capacity_analysis = null;
+      if (stuckPartitions.length > 0 && is_capacity_insufficient) {
+        const recommended_max_tasks = Math.ceil(total_tablet_demand * 1.5); // 建议值为需求的 1.5 倍
+        capacity_analysis = {
+          is_insufficient: true,
+          unscheduled_tablet_num,
+          scheduled_tablet_num,
+          total_tablet_demand,
+          effective_max_tasks,
+          capacity_utilization: (capacity_utilization * 100).toFixed(1) + '%',
+          recommended_max_tasks,
+          severity:
+            capacity_utilization > 1.5
+              ? 'CRITICAL'
+              : capacity_utilization > 1.0
+                ? 'HIGH'
+                : 'MEDIUM',
+          message: `当前 compaction 容量不足: 需求 ${total_tablet_demand} tablets (未调度 ${unscheduled_tablet_num} + 运行中 ${scheduled_tablet_num}), 但容量仅为 ${effective_max_tasks}`,
+          recommendation: is_adaptive
+            ? `当前为自适应模式 (${beCount} 个节点 × 16 = ${effective_max_tasks})，建议手动设置 lake_compaction_max_tasks = ${recommended_max_tasks}`
+            : `当前配置 lake_compaction_max_tasks = ${max_tasks_config}，建议调整为 ${recommended_max_tasks}`,
+          example_command: `UPDATE information_schema.be_configs SET value = '${recommended_max_tasks}' WHERE name = 'lake_compaction_max_tasks';`,
+        };
+        console.error(
+          `   ⚠️  容量不足: 需求 ${total_tablet_demand} > 容量 ${effective_max_tasks} (利用率 ${(capacity_utilization * 100).toFixed(1)}%)`,
+        );
+      } else if (stuckPartitions.length > 0) {
+        capacity_analysis = {
+          is_insufficient: false,
+          unscheduled_tablet_num,
+          scheduled_tablet_num,
+          total_tablet_demand,
+          effective_max_tasks,
+          capacity_utilization: (capacity_utilization * 100).toFixed(1) + '%',
+          message: `容量充足，但仍有分区未调度，可能是其他原因导致`,
+          suggestion: `检查 FE 日志中的调度器错误，或者分区元数据异常`,
+        };
+      }
+
+      return {
+        message:
+          stuckPartitions.length > 0
+            ? `发现 ${stuckPartitions.length} 个高 CS 分区长时间未执行 Compaction (> ${thresholdMinutes} 分钟)`
+            : `所有高 CS 分区都在 ${thresholdMinutes} 分钟内执行过 Compaction`,
+        threshold_minutes: thresholdMinutes,
+        total_high_cs_partitions: csRows.length,
+        stuck_partition_count: stuckPartitions.length,
+        partitions: stuckPartitions,
+        capacity_analysis,
+        suggestion:
+          stuckPartitions.length > 0
+            ? capacity_analysis?.is_insufficient
+              ? '主要原因: lake_compaction_max_tasks 容量不足，需要扩容'
+              : '容量充足但仍未调度，可能是调度器问题、分区元数据异常或其他系统问题'
+            : null,
+      };
+    } catch (error) {
+      console.error(`   ⚠️  检查高 CS 分区失败: ${error.message}`);
+      return {
+        error: error.message,
+        partitions: [],
+      };
+    }
+  }
+
+  /**
+   * 分析单个未完成的 Compaction Job 的子任务执行情况
+   * @param {Connection} connection - 数据库连接
+   * @param {Object} job - 未完成的 job 对象
+   * @returns {Object} 分析结果
+   */
+  async analyzeUnfinishedCompactionJobTasks(connection, job) {
+    try {
+      // 1. 查询该 job 的所有子任务
+      const taskQuery = `
+        SELECT BE_ID, TXN_ID, TABLET_ID, RUNS, START_TIME, FINISH_TIME, PROGRESS, PROFILE
+        FROM information_schema.be_cloud_native_compactions
+        WHERE TXN_ID = ?
+      `;
+      const [taskRows] = await connection.query(taskQuery, [job.txn_id]);
+
+      if (!taskRows || taskRows.length === 0) {
+        return {
+          error: '无法获取子任务信息',
+        };
+      }
+
+      // 2. 从子任务中计算 bucket count (不同 TABLET_ID 的数量)
+      const tasks = taskRows;
+      const uniqueTablets = new Set(tasks.map((t) => t.TABLET_ID));
+      const bucketCount = uniqueTablets.size;
+
+      // 3. 统计子任务状态
+      const totalTasks = tasks.length;
+      let completedTasks = 0; // PROGRESS = 100
+      let runningTasks = 0; // START_TIME 不为空 且 PROGRESS < 100
+      let pendingTasks = 0; // START_TIME 为空
+      let unfinishedTasks = 0; // PROGRESS != 100
+
+      const unfinishedTaskDetails = [];
+      const completedTaskProfiles = []; // 保存已完成任务的 Profile 分析
+      const beRunsMap = {}; // 统计每个 BE 节点的 RUNS 信息
+
+      for (const task of tasks) {
+        const progress = task.PROGRESS || 0;
+        const startTime = task.START_TIME;
+        const finishTime = task.FINISH_TIME;
+        const beId = task.BE_ID;
+        const runs = task.RUNS || 1;
+
+        // 统计每个 BE 的 RUNS (只统计成功的和正在运行的任务)
+        if (progress === 100 || (startTime && progress < 100)) {
+          if (!beRunsMap[beId]) {
+            beRunsMap[beId] = {
+              runs_list: [],
+              task_count: 0,
+            };
+          }
+          beRunsMap[beId].runs_list.push(runs);
+          beRunsMap[beId].task_count++;
+        }
+
+        if (progress === 100) {
+          completedTasks++;
+
+          // 分析已完成任务的 Profile
+          if (task.PROFILE) {
+            try {
+              const profile =
+                typeof task.PROFILE === 'string'
+                  ? JSON.parse(task.PROFILE)
+                  : task.PROFILE;
+
+              const profileData = {
+                tablet_id: task.TABLET_ID,
+                be_id: beId,
+                in_queue_sec: profile.in_queue_sec || 0,
+                read_local_sec: profile.read_local_sec || 0,
+                read_local_mb: profile.read_local_mb || 0,
+                read_remote_sec: profile.read_remote_sec || 0,
+                read_remote_mb: profile.read_remote_mb || 0,
+                write_remote_sec: profile.write_remote_sec || 0,
+                write_remote_mb: profile.write_remote_mb || 0,
+              };
+
+              completedTaskProfiles.push(profileData);
+            } catch (error) {
+              // Profile 解析失败,忽略
+            }
+          }
+        } else {
+          unfinishedTasks++;
+
+          if (!startTime) {
+            pendingTasks++;
+          } else {
+            runningTasks++;
+          }
+
+          // 收集未完成任务的详细信息
+          unfinishedTaskDetails.push({
+            be_id: beId,
+            tablet_id: task.TABLET_ID,
+            runs: runs,
+            start_time: startTime,
+            finish_time: finishTime,
+            progress: progress,
+            has_profile: !!task.PROFILE,
+          });
+        }
+      }
+
+      // 4. 分析已完成任务的 Profile 聚合统计
+      let profileAnalysis = null;
+      if (completedTaskProfiles.length > 0) {
+        const totalInQueueSec = completedTaskProfiles.reduce(
+          (sum, p) => sum + p.in_queue_sec,
+          0,
+        );
+        const totalReadLocalMB = completedTaskProfiles.reduce(
+          (sum, p) => sum + p.read_local_mb,
+          0,
+        );
+        const totalReadRemoteMB = completedTaskProfiles.reduce(
+          (sum, p) => sum + p.read_remote_mb,
+          0,
+        );
+        const totalWriteRemoteMB = completedTaskProfiles.reduce(
+          (sum, p) => sum + p.write_remote_mb,
+          0,
+        );
+
+        const avgInQueueSec = totalInQueueSec / completedTaskProfiles.length;
+
+        // 识别问题
+        const issues = [];
+
+        // 检查 1: 排队时间过长
+        if (avgInQueueSec > 30) {
+          issues.push({
+            type: 'high_queue_time',
+            severity: avgInQueueSec > 60 ? 'HIGH' : 'MEDIUM',
+            description: `平均排队时间 ${avgInQueueSec.toFixed(1)} 秒，BE 节点 Compaction 工作线程数量不足`,
+            suggestion: '需要适当调大 compact_threads 的值',
+          });
+        }
+
+        // 检查 2: 缓存命中率低
+        const totalReadMB = totalReadLocalMB + totalReadRemoteMB;
+        const cacheHitRatio =
+          totalReadMB > 0 ? (totalReadLocalMB / totalReadMB) * 100 : 0;
+
+        if (totalReadLocalMB < totalReadRemoteMB * 0.2) {
+          // 本地读取 < 远程读取的 20%
+          issues.push({
+            type: 'low_cache_hit',
+            severity: cacheHitRatio < 5 ? 'HIGH' : 'MEDIUM',
+            description: `缓存命中率低 (${cacheHitRatio.toFixed(1)}%)，本地读取 ${totalReadLocalMB.toFixed(1)} MB，远程读取 ${totalReadRemoteMB.toFixed(1)} MB`,
+            suggestion: 'Cache 尚未开启或者 Cache 空间比较紧张',
+          });
+        }
+
+        profileAnalysis = {
+          completed_task_count: completedTaskProfiles.length,
+          avg_in_queue_sec: avgInQueueSec.toFixed(1),
+          total_read_local_mb: totalReadLocalMB.toFixed(1),
+          total_read_remote_mb: totalReadRemoteMB.toFixed(1),
+          total_write_remote_mb: totalWriteRemoteMB.toFixed(1),
+          cache_hit_ratio: cacheHitRatio.toFixed(1) + '%',
+          issues: issues,
+        };
+      }
+
+      // 4.5 分析每个 BE 节点的 RUNS 情况
+      const beRunsAnalysis = [];
+      for (const [beId, beData] of Object.entries(beRunsMap)) {
+        const runsList = beData.runs_list;
+        const taskCount = beData.task_count;
+
+        if (taskCount === 0) continue;
+
+        const avgRuns = runsList.reduce((sum, r) => sum + r, 0) / taskCount;
+        const maxRuns = Math.max(...runsList);
+
+        const hasMemoryIssue = maxRuns > 1;
+
+        beRunsAnalysis.push({
+          be_id: beId,
+          task_count: taskCount,
+          avg_runs: avgRuns.toFixed(2),
+          max_runs: maxRuns,
+          has_memory_issue: hasMemoryIssue,
+          severity: maxRuns > 3 ? 'HIGH' : maxRuns > 1 ? 'MEDIUM' : 'NORMAL',
+          description: hasMemoryIssue
+            ? `BE ${beId} 出现过内存不足情况 (最大 ${maxRuns} 次重试, 平均 ${avgRuns.toFixed(1)} 次)`
+            : `BE ${beId} 运行正常 (平均 RUNS: ${avgRuns.toFixed(1)})`,
+        });
+      }
+
+      // 按严重程度排序
+      beRunsAnalysis.sort((a, b) => {
+        const severityOrder = { HIGH: 3, MEDIUM: 2, NORMAL: 1 };
+        return (
+          (severityOrder[b.severity] || 0) - (severityOrder[a.severity] || 0)
+        );
+      });
+
+      // 5. 返回分析结果
+      return {
+        bucket_count: bucketCount,
+        total_tasks: totalTasks,
+        completed_tasks: completedTasks,
+        unfinished_tasks: unfinishedTasks,
+        running_tasks: runningTasks,
+        pending_tasks: pendingTasks,
+        completion_ratio:
+          ((completedTasks / totalTasks) * 100).toFixed(1) + '%',
+        unfinished_task_samples: unfinishedTaskDetails.slice(0, 5), // 最多显示 5 个样本
+        profile_analysis: profileAnalysis, // 已完成任务的 Profile 分析
+        be_runs_analysis: beRunsAnalysis, // 每个 BE 节点的 RUNS 分析
+      };
+    } catch (error) {
+      return {
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * 深度分析 Compaction 慢任务问题
+   * 提供详细的根因分析和优化建议
+   */
+  async analyzeSlowCompactionTasks(connection, options = {}) {
+    const {
+      database_name = null,
+      table_name = null,
+      min_duration_hours = 0.05, // 最小运行时长（小时），默认 3 分钟
+      include_task_details = true,
+      check_system_metrics = true,
+    } = options;
+
+    try {
+      console.error('🔍 开始分析 Compaction 慢任务问题...');
+      if (database_name || table_name) {
+        console.error(
+          `   📌 过滤目标: ${database_name || '*'}.${table_name || '*'}`,
+        );
+      }
+      console.error(
+        `   📌 慢任务阈值: >= ${min_duration_hours}h (${(min_duration_hours * 60).toFixed(1)} 分钟)`,
+      );
+
+      // 1. 通过 SHOW PROC '/compactions' 获取所有 compaction jobs
+      console.error(
+        "🔍 步骤1: 通过 SHOW PROC '/compactions' 获取所有 Compaction Jobs...",
+      );
+      const allJobs = await this.getCompactionJobsFromProc(connection);
+      console.error(`   → 找到 ${allJobs.length} 个 Compaction Jobs`);
+
+      // 2. 根据 database_name 和 table_name 过滤 jobs（简单字符串匹配）
+      console.error('🔍 步骤2: 根据 database/table 过滤 Jobs...');
+      let filteredJobs = allJobs;
+
+      if (database_name || table_name) {
+        filteredJobs = allJobs.filter((job) => {
+          // 简单的字符串匹配
+          if (database_name && job.database !== database_name) return false;
+          if (table_name && job.table !== table_name) return false;
+          return true;
+        });
+
+        console.error(
+          `   → 过滤后剩余 ${filteredJobs.length} 个 Jobs (原始: ${allJobs.length})`,
+        );
+
+        // 输出示例
+        if (filteredJobs.length > 0) {
+          const samples = filteredJobs.slice(0, 3);
+          console.error(
+            `   → 示例 Jobs: ${samples.map((j) => `${j.database}.${j.table} (txn:${j.txn_id})`).join(', ')}`,
+          );
+        }
+      }
+
+      // 3. 分组: 已完成 vs 未完成
+      console.error('🔍 步骤3: 分组 Jobs (已完成 vs 未完成)...');
+      const completedJobs = []; // FinishTime IS NOT NULL AND Error IS NULL
+      const unfinishedJobs = []; // FinishTime IS NULL
+
+      for (const job of filteredJobs) {
+        if (job.finish_time && !job.error) {
+          // 已完成且成功的任务 (FinishTime IS NOT NULL AND Error IS NULL)
+          completedJobs.push(job);
+        } else {
+          // 未完成或失败的任务
+          unfinishedJobs.push(job);
+        }
+      }
+
+      console.error(
+        `   → 已完成(成功): ${completedJobs.length} 个, 未完成/失败: ${unfinishedJobs.length} 个`,
+      );
+
+      // 4. 分析已完成的慢任务
+      console.error('🔍 步骤4: 分析已完成的慢任务...');
+      const slowCompletedJobs = [];
+
+      for (const job of completedJobs) {
+        if (!job.start_time || !job.finish_time) continue;
+
+        // 计算耗时: FinishTime - StartTime
+        const startTime = new Date(job.start_time);
+        const finishTime = new Date(job.finish_time);
+        const durationHours = (finishTime - startTime) / (1000 * 60 * 60);
+
+        // 判断是否为慢任务
+        if (durationHours >= min_duration_hours) {
+          // 分析 Profile
+          const profileAnalysis = await this.analyzeCompactionJobProfile(
+            job,
+            durationHours,
+          );
+
+          slowCompletedJobs.push({
+            type: 'completed',
+            txn_id: job.txn_id,
+            database: job.database,
+            table: job.table,
+            partition_name: job.partition_name,
+            start_time: job.start_time,
+            finish_time: job.finish_time,
+            duration_hours: durationHours,
+            duration_minutes: (durationHours * 60).toFixed(1),
+            profile_analysis: profileAnalysis,
+          });
+        }
+      }
+
+      console.error(
+        `   → 找到 ${slowCompletedJobs.length} 个慢任务（>= ${min_duration_hours}h = ${(min_duration_hours * 60).toFixed(1)}min）`,
+      );
+
+      // 5. 分析未完成的任务 (可选)
+      console.error('🔍 步骤5: 分析未完成的任务...');
+      const slowUnfinishedJobs = [];
+      for (const job of unfinishedJobs) {
+        if (job.start_time) {
+          const startTime = new Date(job.start_time);
+          const now = new Date();
+          const durationHours = (now - startTime) / (1000 * 60 * 60);
+
+          if (durationHours >= min_duration_hours) {
+            slowUnfinishedJobs.push({
+              type: 'unfinished',
+              txn_id: job.txn_id,
+              database: job.database,
+              table: job.table,
+              partition_name: job.partition_name,
+              start_time: job.start_time,
+              duration_hours: durationHours,
+              duration_minutes: (durationHours * 60).toFixed(1),
+              error: job.error,
+            });
+          }
+        }
+      }
+
+      console.error(`   → 找到 ${slowUnfinishedJobs.length} 个未完成的慢任务`);
+
+      // 5.5 分析未完成的慢任务详情
+      if (slowUnfinishedJobs.length > 0) {
+        console.error(`   → 开始分析未完成慢任务的子任务执行情况...`);
+
+        for (const job of slowUnfinishedJobs) {
+          // 调用独立的分析函数
+          const taskAnalysis = await this.analyzeUnfinishedCompactionJobTasks(
+            connection,
+            job,
+          );
+          job.task_analysis = taskAnalysis;
+
+          // 输出日志
+          if (!taskAnalysis.error) {
+            let logMsg = `     - Job ${job.txn_id}: 总任务 ${taskAnalysis.total_tasks}, 未完成 ${taskAnalysis.unfinished_tasks} (运行中 ${taskAnalysis.running_tasks}, 待开始 ${taskAnalysis.pending_tasks})`;
+
+            if (
+              taskAnalysis.profile_analysis &&
+              taskAnalysis.profile_analysis.issues.length > 0
+            ) {
+              const issueTypes = taskAnalysis.profile_analysis.issues
+                .map((i) => i.type)
+                .join(', ');
+              logMsg += `, 发现问题: ${issueTypes}`;
+            }
+
+            // 添加内存问题提示
+            const memoryIssueBEs = taskAnalysis.be_runs_analysis.filter(
+              (be) => be.has_memory_issue,
+            );
+            if (memoryIssueBEs.length > 0) {
+              const beIds = memoryIssueBEs
+                .map((be) => `BE ${be.be_id}(${be.max_runs}次)`)
+                .join(', ');
+              logMsg += `, 内存不足: ${beIds}`;
+            }
+
+            console.error(logMsg);
+          } else {
+            console.error(
+              `     ⚠️  分析 Job ${job.txn_id} 失败: ${taskAnalysis.error}`,
+            );
+          }
+        }
+      }
+
+      // 6. 汇总所有慢任务
+      const allSlowJobs = [...slowCompletedJobs, ...slowUnfinishedJobs];
+      allSlowJobs.sort((a, b) => b.duration_hours - a.duration_hours);
+
+      console.error(
+        `   ✅ 分析完成！总共 ${allSlowJobs.length} 个慢任务 (已完成: ${slowCompletedJobs.length}, 未完成: ${slowUnfinishedJobs.length})`,
+      );
+
+      // 7. 检查是否有高 CS 分区但没有 Compaction Job
+      let stuckPartitions = null;
+      if (database_name && table_name && filteredJobs.length === 0) {
+        console.error('🔍 步骤7: 未找到 Compaction Job, 检查高 CS 分区...');
+        stuckPartitions = await this.checkStuckPartitionsWithHighCS(
+          connection,
+          database_name,
+          table_name,
+        );
+
+        if (stuckPartitions && stuckPartitions.partitions.length > 0) {
+          console.error(
+            `   ⚠️  发现 ${stuckPartitions.partitions.length} 个高 CS 分区长时间未执行 Compaction`,
+          );
+        }
+      }
+
+      // 8. 生成诊断摘要 - 汇总瓶颈原因
+      const diagnosis = await this.generateSlowJobDiagnosis(
+        connection,
+        database_name,
+        table_name,
+        slowCompletedJobs,
+      );
+
+      // 8.5 如果发现了高 CS 分区长时间未执行 Compaction 且有容量问题, 添加到诊断中
+      if (
+        stuckPartitions &&
+        stuckPartitions.partitions.length > 0 &&
+        stuckPartitions.capacity_analysis
+      ) {
+        const capacity = stuckPartitions.capacity_analysis;
+
+        if (capacity.is_insufficient) {
+          // 容量不足,添加到 issues
+          diagnosis.issues.push({
+            type: 'compaction_capacity_insufficient',
+            severity: capacity.severity,
+            description: capacity.message,
+            details: {
+              unscheduled_partitions: stuckPartitions.stuck_partition_count,
+              unscheduled_tablets: capacity.unscheduled_tablet_num,
+              running_tablets: capacity.scheduled_tablet_num,
+              total_demand: capacity.total_tablet_demand,
+              current_capacity: capacity.effective_max_tasks,
+              utilization: capacity.capacity_utilization,
+              recommended_capacity: capacity.recommended_max_tasks,
+            },
+            impact: `${stuckPartitions.stuck_partition_count} 个高 CS 分区 (共 ${capacity.unscheduled_tablet_num} tablets) 长时间未被调度，导致 CS 持续累积`,
+            root_cause:
+              'lake_compaction_max_tasks 参数配置过小，系统容量不足以处理当前的 Compaction 需求',
+          });
+
+          // 添加到 recommendations
+          diagnosis.recommendations.push({
+            priority: 'CRITICAL',
+            category: 'capacity_planning',
+            title: '扩容 Compaction 任务队列容量',
+            description: capacity.recommendation,
+            actions: [
+              `当前容量: ${capacity.effective_max_tasks} tablets`,
+              `实际需求: ${capacity.total_tablet_demand} tablets (未调度 ${capacity.unscheduled_tablet_num} + 运行中 ${capacity.scheduled_tablet_num})`,
+              `容量利用率: ${capacity.capacity_utilization}`,
+              `建议扩容至: ${capacity.recommended_max_tasks} tablets (需求的 1.5 倍)`,
+              '',
+              '执行以下命令调整参数:',
+            ],
+            example_command: capacity.example_command,
+          });
+        } else {
+          // 容量充足但仍未调度
+          diagnosis.issues.push({
+            type: 'compaction_scheduling_issue',
+            severity: 'HIGH',
+            description: capacity.message,
+            details: {
+              stuck_partitions: stuckPartitions.stuck_partition_count,
+              unscheduled_tablets: capacity.unscheduled_tablet_num,
+              running_tablets: capacity.scheduled_tablet_num,
+              current_capacity: capacity.effective_max_tasks,
+              utilization: capacity.capacity_utilization,
+            },
+            impact: `${stuckPartitions.stuck_partition_count} 个高 CS 分区长时间未被调度`,
+            root_cause:
+              '容量充足，但 Compaction 调度器未正常工作，可能是元数据异常、网络问题或调度器 bug',
+          });
+
+          diagnosis.recommendations.push({
+            priority: 'HIGH',
+            category: 'troubleshooting',
+            title: '排查 Compaction 调度异常',
+            description: capacity.suggestion,
+            actions: [
+              '检查 FE 日志中是否有 Compaction 调度器相关的 ERROR 或 WARN 信息',
+              '验证 FE 与 BE/CN 节点之间的网络连通性',
+              '检查受影响分区的元数据是否正常: SELECT * FROM information_schema.partitions_meta WHERE ...',
+              "查看调度状态: SHOW PROC '/compactions'",
+              '如果怀疑是元数据问题，尝试刷新元数据或重启 FE',
+            ],
+          });
+        }
+      }
+
+      // 9. 返回结果
+      const result = {
+        success: true,
+        analysis_time: new Date().toISOString(),
+        filter: {
+          database: database_name,
+          table: table_name,
+          min_duration_hours,
+        },
+        summary: {
+          total_jobs: filteredJobs.length,
+          completed_jobs: completedJobs.length,
+          unfinished_jobs: unfinishedJobs.length,
+          slow_completed_jobs: slowCompletedJobs.length,
+          slow_unfinished_jobs: slowUnfinishedJobs.length,
+          total_slow_jobs: allSlowJobs.length,
+          slowest_duration_hours:
+            allSlowJobs[0]?.duration_hours.toFixed(2) || 0,
+          avg_slow_duration_hours:
+            allSlowJobs.length > 0
+              ? (
+                  allSlowJobs.reduce((sum, j) => sum + j.duration_hours, 0) /
+                  allSlowJobs.length
+                ).toFixed(2)
+              : 0,
+        },
+        diagnosis: diagnosis, // 慢任务的根因诊断 (包含容量分析)
+        slow_jobs: include_task_details
+          ? allSlowJobs
+          : allSlowJobs.slice(0, 10),
+      };
+
+      // 如果发现了高 CS 分区长时间未执行 Compaction, 添加到结果中
+      if (stuckPartitions && stuckPartitions.partitions.length > 0) {
+        result.stuck_partitions = stuckPartitions;
+      }
+
+      return result;
+    } catch (error) {
+      console.error('分析慢任务失败:', error);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * 生成慢任务诊断摘要
+   * 根据 Profile 内各个字段精准分析瓶颈原因
+   */
+  async generateSlowJobDiagnosis(
+    connection,
+    database_name,
+    table_name,
+    slowCompletedJobs,
+  ) {
+    if (slowCompletedJobs.length === 0) {
+      return {
+        message: '没有找到慢任务',
+        issues: [],
+        recommendations: [],
+      };
+    }
+
+    // 检查表是否开启了 data cache
+    let tableCacheEnabled = null; // null: 未检查, true: 已开启, false: 未开启
+    if (database_name && table_name) {
+      try {
+        const [rows] = await connection.query(
+          `SHOW CREATE TABLE \`${database_name}\`.\`${table_name}\``,
+        );
+        if (rows && rows.length > 0) {
+          const createTableStmt =
+            rows[0]['Create Table'] || rows[0]['CREATE TABLE'] || '';
+
+          // 从 PROPERTIES 中提取 datacache.enable 属性
+          const propertiesMatch = createTableStmt.match(
+            /PROPERTIES\s*\(([\s\S]*?)\)(?:\s*;?\s*$|\s*BROKER)/i,
+          );
+          if (propertiesMatch) {
+            const propertiesStr = propertiesMatch[1];
+            const datacacheEnableMatch = propertiesStr.match(
+              /["']datacache\.enable["']\s*=\s*["'](true|false)["']/i,
+            );
+            if (datacacheEnableMatch) {
+              tableCacheEnabled =
+                datacacheEnableMatch[1].toLowerCase() === 'true';
+              console.error(
+                `   ℹ️  表 ${database_name}.${table_name} 的 datacache.enable = ${tableCacheEnabled}`,
+              );
+            }
+          }
+        }
+      } catch (error) {
+        console.error(`   ⚠️  无法检查表缓存配置: ${error.message}`);
+      }
+    }
+
+    // 统计各类问题
+    const issues = {
+      high_queue_time: [], // in_queue_sec 过长
+      high_sub_task_count: [], // sub_task_count 过大
+      cache_disabled: [], // read_local_mb = 0
+      cache_insufficient: [], // read_remote_mb >> read_local_mb
+      no_profile: [], // 缺少 Profile
+    };
+
+    for (const job of slowCompletedJobs) {
+      const analysis = job.profile_analysis;
+
+      if (!analysis || !analysis.success) {
+        issues.no_profile.push({
+          txn_id: job.txn_id,
+          duration_hours: job.duration_hours,
+          reason: analysis?.error || '缺少 Profile 数据',
+        });
+        continue;
+      }
+
+      const metrics = analysis.metrics;
+      const durationSec = analysis.duration_sec;
+
+      // 1. 检查排队时间
+      const queueTimeSec = metrics.in_queue_sec || 0;
+      const queueRatio =
+        durationSec > 0 ? (queueTimeSec / durationSec) * 100 : 0;
+
+      if (queueRatio > 30) {
+        // 排队时间超过 30%
+        issues.high_queue_time.push({
+          txn_id: job.txn_id,
+          duration_hours: job.duration_hours,
+          in_queue_sec: queueTimeSec,
+          queue_ratio: queueRatio.toFixed(1) + '%',
+          severity: queueRatio > 50 ? 'HIGH' : 'MEDIUM',
+        });
+      }
+
+      // 2. 检查 sub_task_count
+      const subTaskCount = metrics.sub_task_count || 0;
+
+      if (subTaskCount > 100) {
+        // sub_task_count 过大
+        issues.high_sub_task_count.push({
+          txn_id: job.txn_id,
+          duration_hours: job.duration_hours,
+          sub_task_count: subTaskCount,
+          severity: subTaskCount > 500 ? 'HIGH' : 'MEDIUM',
+        });
+      }
+
+      // 3. 检查缓存情况
+      const readLocalMB = metrics.read_local_mb || 0;
+      const readRemoteMB = metrics.read_remote_mb || 0;
+
+      // 优先根据表配置判断是否开启缓存
+      if (tableCacheEnabled === false) {
+        // 表配置明确显示未开启缓存
+        if (readRemoteMB > 0) {
+          issues.cache_disabled.push({
+            txn_id: job.txn_id,
+            duration_hours: job.duration_hours,
+            read_remote_mb: readRemoteMB.toFixed(1),
+            check_method: 'table_property', // 检查方式: 表属性
+            severity: 'HIGH',
+          });
+        }
+      } else if (readLocalMB === 0 && readRemoteMB > 0) {
+        // Profile 显示缓存未命中 (兜底检查)
+        issues.cache_disabled.push({
+          txn_id: job.txn_id,
+          duration_hours: job.duration_hours,
+          read_remote_mb: readRemoteMB.toFixed(1),
+          check_method: 'profile_metric', // 检查方式: Profile 指标
+          severity: tableCacheEnabled === null ? 'HIGH' : 'MEDIUM', // 未检查到表配置时严重程度更高
+        });
+      } else if (readLocalMB > 0 && readRemoteMB > readLocalMB * 5) {
+        // 远程读取远大于本地读取 (5倍以上)
+        const cacheHitRatio = (
+          (readLocalMB / (readLocalMB + readRemoteMB)) *
+          100
+        ).toFixed(1);
+        issues.cache_insufficient.push({
+          txn_id: job.txn_id,
+          duration_hours: job.duration_hours,
+          read_local_mb: readLocalMB.toFixed(1),
+          read_remote_mb: readRemoteMB.toFixed(1),
+          cache_hit_ratio: cacheHitRatio + '%',
+          severity: cacheHitRatio < 10 ? 'HIGH' : 'MEDIUM',
+        });
+      }
+    }
+
+    // 生成优化建议
+    const recommendations = this.generateDetailedRecommendations(
+      issues,
+      database_name,
+      table_name,
+    );
+
+    // 生成诊断消息
+    const totalIssues =
+      issues.high_queue_time.length +
+      issues.high_sub_task_count.length +
+      issues.cache_disabled.length +
+      issues.cache_insufficient.length;
+
+    const message =
+      totalIssues > 0
+        ? `分析了 ${slowCompletedJobs.length} 个慢任务，发现 ${totalIssues} 个性能问题`
+        : `分析了 ${slowCompletedJobs.length} 个慢任务，未发现明显瓶颈`;
+
+    return {
+      message: message,
+      total_analyzed: slowCompletedJobs.length,
+      issues: {
+        high_queue_time: {
+          count: issues.high_queue_time.length,
+          description: '排队等待时间过长 (> 30%)',
+          samples: issues.high_queue_time.slice(0, 3),
+        },
+        high_sub_task_count: {
+          count: issues.high_sub_task_count.length,
+          description: '子任务数量过大 (> 100)',
+          samples: issues.high_sub_task_count.slice(0, 3),
+        },
+        cache_disabled: {
+          count: issues.cache_disabled.length,
+          description: '缓存未开启 (read_local_mb = 0)',
+          samples: issues.cache_disabled.slice(0, 3),
+        },
+        cache_insufficient: {
+          count: issues.cache_insufficient.length,
+          description: '缓存容量不足 (read_remote_mb >> read_local_mb)',
+          samples: issues.cache_insufficient.slice(0, 3),
+        },
+        no_profile: {
+          count: issues.no_profile.length,
+          description: '缺少 Profile 数据',
+          samples: issues.no_profile.slice(0, 3),
+        },
+      },
+      recommendations: recommendations,
+    };
+  }
+
+  /**
+   * 根据问题类型生成详细优化建议
+   */
+  generateDetailedRecommendations(issues, database_name, table_name) {
+    const recommendations = [];
+
+    // 1. 排队时间过长
+    if (issues.high_queue_time.length > 0) {
+      const highSeverityCount = issues.high_queue_time.filter(
+        (i) => i.severity === 'HIGH',
+      ).length;
+
+      recommendations.push({
+        issue: '排队等待时间过长',
+        severity: highSeverityCount > 0 ? 'HIGH' : 'MEDIUM',
+        affected_jobs: issues.high_queue_time.length,
+        root_cause:
+          'BE/CN 节点的 Compaction 工作线程数量不足，任务在队列中等待调度',
+        solutions: [
+          '调整 BE/CN 节点的 compact_threads 参数，增加 Compaction 线程数',
+          '使用 UPDATE information_schema.be_configs 命令动态调整 (建议根据 CPU 核数设置为 2-4 倍)',
+          '检查集群 CPU 和内存资源是否充足，确保可以支持更高的线程并发',
+          '考虑在低峰期手动触发 Compaction，避免高峰期排队',
+        ],
+        example_command:
+          "UPDATE information_schema.be_configs SET value = '16' WHERE name = 'compact_threads';  -- 根据 CPU 核数调整",
+      });
+    }
+
+    // 2. 子任务数量过大
+    if (issues.high_sub_task_count.length > 0) {
+      const highSeverityCount = issues.high_sub_task_count.filter(
+        (i) => i.severity === 'HIGH',
+      ).length;
+
+      recommendations.push({
+        issue: '子任务数量过大',
+        severity: highSeverityCount > 0 ? 'HIGH' : 'MEDIUM',
+        affected_jobs: issues.high_sub_task_count.length,
+        root_cause:
+          '分区内的 Tablet 数量过多 (sub_task_count 代表 Tablet 数量)，导致 Compaction Job 需要处理大量子任务',
+        solutions: [
+          '减少表的分桶数量 (BUCKETS)，降低单个分区的 Tablet 数',
+          '对于新建表，建议 BUCKETS 数量 = 节点数 × CPU核数 ÷ 2',
+          '对于现有表，考虑重建表并调整分桶数量',
+          '检查表的数据分布是否均匀，避免数据倾斜导致某些分区 Tablet 过多',
+        ],
+        example_command:
+          'CREATE TABLE ... DISTRIBUTED BY HASH(...) BUCKETS 32;  -- 根据集群规模调整',
+      });
+    }
+
+    // 3. 缓存未开启
+    if (issues.cache_disabled.length > 0) {
+      // 检查是否通过表属性确认了缓存未开启
+      const confirmedByTableProperty = issues.cache_disabled.some(
+        (i) => i.check_method === 'table_property',
+      );
+
+      const rootCause = confirmedByTableProperty
+        ? '表属性 datacache.enable = false，缓存已明确禁用，所有数据都从对象存储读取'
+        : 'Profile 显示 read_local_mb = 0，表可能未开启缓存或缓存未命中';
+
+      recommendations.push({
+        issue: '缓存未开启',
+        severity: 'HIGH',
+        affected_jobs: issues.cache_disabled.length,
+        root_cause: rootCause,
+        solutions: confirmedByTableProperty
+          ? [
+              '方案 1: 重建表并开启缓存（推荐）',
+              '  ⚠️ datacache.enable 属性只能在建表时指定，无法通过 ALTER TABLE 修改',
+              "  需要重建表并在 PROPERTIES 中设置 'datacache.enable' = 'true'",
+              '  建议步骤: 1) 使用 CREATE TABLE AS SELECT 重建表 2) 验证数据 3) 删除旧表 4) 重命名新表',
+              '  确保 BE/CN 节点已配置缓存磁盘路径 (storage_root_path) 和足够空间',
+              '',
+              '方案 2: 仅加速 Compaction（不开启查询缓存）',
+              '  如果不想为表开启 Data Cache，但想加快 Compaction 速度',
+              '  可以开启 BE/CN 节点参数: lake_enable_vertical_compaction_fill_data_cache = true',
+              '  该参数让 Compaction 过程中填充缓存，加速后续 Compaction，但不影响查询',
+              "  修改方法: UPDATE information_schema.be_configs SET value = 'true' WHERE name = 'lake_enable_vertical_compaction_fill_data_cache';",
+            ]
+          : [
+              '首先检查表的缓存配置: SHOW CREATE TABLE db.table',
+              '如果 datacache.enable = false，需要重建表来开启缓存（无法通过 ALTER TABLE 修改）',
+              '如果 datacache.enable = true 但 read_local_mb = 0，检查 BE/CN 节点缓存磁盘是否正常',
+              '检查 storage_root_path 配置和磁盘空间',
+              '',
+              '💡 临时加速方案: 如果不想重建表，可以开启 lake_enable_vertical_compaction_fill_data_cache 参数',
+              '  该参数让 Compaction 过程填充缓存，加速后续 Compaction（仅影响 Compaction，不影响查询缓存）',
+            ],
+        example_command:
+          database_name && table_name
+            ? `-- 方案 1: 重建表并开启缓存\nCREATE TABLE ${database_name}.${table_name}_new LIKE ${database_name}.${table_name};\nALTER TABLE ${database_name}.${table_name}_new SET ('datacache.enable' = 'true');\nINSERT INTO ${database_name}.${table_name}_new SELECT * FROM ${database_name}.${table_name};\n\n-- 方案 2: 仅加速 Compaction（不重建表）\nUPDATE information_schema.be_configs SET value = 'true' WHERE name = 'lake_enable_vertical_compaction_fill_data_cache';`
+            : "-- 方案 1: 重建表并开启缓存\nCREATE TABLE <db>.<table>_new LIKE <db>.<table>;\nALTER TABLE <db>.<table>_new SET ('datacache.enable' = 'true');\nINSERT INTO <db>.<table>_new SELECT * FROM <db>.<table>;\n\n-- 方案 2: 仅加速 Compaction（不重建表）\nUPDATE information_schema.be_configs SET value = 'true' WHERE name = 'lake_enable_vertical_compaction_fill_data_cache';",
+      });
+    }
+
+    // 4. 缓存容量不足
+    if (issues.cache_insufficient.length > 0) {
+      const highSeverityCount = issues.cache_insufficient.filter(
+        (i) => i.severity === 'HIGH',
+      ).length;
+
+      recommendations.push({
+        issue: '缓存容量不足',
+        severity: highSeverityCount > 0 ? 'HIGH' : 'MEDIUM',
+        affected_jobs: issues.cache_insufficient.length,
+        root_cause:
+          '本地缓存容量不足，大量数据需要从对象存储读取 (read_remote_mb >> read_local_mb)',
+        solutions: [
+          '增加缓存磁盘的容量，扩展 storage_root_path 配置',
+          '调整缓存淘汰策略，优先缓存热数据',
+          '考虑添加更多 BE/CN 节点以增加总体缓存容量',
+          '检查缓存磁盘的使用情况，确保有足够的可用空间',
+          '',
+          '💡 优化建议: 开启 lake_enable_vertical_compaction_fill_data_cache 参数',
+          '  该参数可以让 Compaction 过程填充缓存，提升缓存命中率和 Compaction 效率',
+        ],
+        example_command:
+          "UPDATE information_schema.be_configs SET value = 'true' WHERE name = 'lake_enable_vertical_compaction_fill_data_cache';",
+      });
+    }
+
+    return recommendations;
+  }
+
+  /**
+   * 获取 tablet 所属的 database 和 table
+   * @param {Connection} connection - 数据库连接
+   * @param {Array<number>} tabletIds - tablet ID 列表
+   * @returns {Map<number, {database: string, table: string}>} tablet_id -> {database, table} 映射
+   */
+  async getTabletMetadata(connection, tabletIds) {
+    if (!tabletIds || tabletIds.length === 0) {
+      return new Map();
+    }
+
+    try {
+      const tabletIdList = tabletIds.join(',');
+      const [rows] = await connection.query(`
+        SELECT
+          t.TABLET_ID,
+          t.TABLE_ID,
+          tbl.TABLE_NAME,
+          tbl.TABLE_SCHEMA as DATABASE_NAME
+        FROM information_schema.tables_config t
+        JOIN information_schema.tables tbl
+          ON t.TABLE_ID = tbl.TABLE_ID
+        WHERE t.TABLET_ID IN (${tabletIdList})
+      `);
+
+      const metadataMap = new Map();
+      for (const row of rows) {
+        metadataMap.set(row.TABLET_ID, {
+          database: row.DATABASE_NAME,
+          table: row.TABLE_NAME,
+        });
+      }
+
+      return metadataMap;
+    } catch (error) {
+      console.warn('获取 tablet 元数据失败:', error.message);
+      return new Map();
+    }
+  }
+
+  /**
+   * 通过 SHOW PROC '/compactions' 获取 Compaction Jobs
+   */
+  async getCompactionJobsFromProc(connection) {
+    try {
+      const [rows] = await connection.query("SHOW PROC '/compactions'");
+
+      if (!rows || rows.length === 0) {
+        console.error('   → 未找到任何 Compaction Jobs');
+        return [];
+      }
+
+      // 解析返回结果，并提取 database 和 table
+      // 实际字段: Partition, TxnID, StartTime, CommitTime, FinishTime, Error, Profile
+      const jobs = rows.map((row) => {
+        const partitionName = row.Partition || '';
+
+        // 从 Partition 提取 database 和 table
+        // 格式: db_name.table_name.partition_id (例如: tpcds_1t.web_returns.123456)
+        let database = null;
+        let table = null;
+
+        if (partitionName) {
+          // 匹配 "db_name.table_name.partition_id"
+          const match = partitionName.match(/^([^.]+)\.([^.]+)\./);
+          if (match) {
+            database = match[1];
+            table = match[2];
+          }
+        }
+
+        return {
+          partition_name: partitionName,
+          database: database,
+          table: table,
+          txn_id: row.TxnID,
+          start_time: row.StartTime,
+          commit_time: row.CommitTime,
+          finish_time: row.FinishTime,
+          error: row.Error,
+          profile: row.Profile,
+        };
+      });
+
+      console.error(`   → 找到 ${jobs.length} 个 Compaction Jobs`);
+      return jobs;
+    } catch (error) {
+      console.warn('获取 Compaction Jobs 失败:', error.message);
+      return [];
+    }
+  }
+
+  /**
+   * 分析 Compaction Job Profile
+   * 重点分析: sub_task_count, read_local_sec/mb, read_remote_sec/mb, in_queue_sec
+   */
+  async analyzeCompactionJobProfile(job, durationHours) {
+    try {
+      // 解析 Profile 字段 (JSON 格式)
+      let profile = null;
+      if (job.profile) {
+        try {
+          profile =
+            typeof job.profile === 'string'
+              ? JSON.parse(job.profile)
+              : job.profile;
+        } catch (error) {
+          console.error(
+            `   ⚠️ Profile 解析失败 (Job ${job.txn_id}):`,
+            error.message,
+          );
+          return {
+            success: false,
+            error: 'Profile 解析失败',
+            duration_hours: durationHours,
+          };
+        }
+      }
+
+      if (!profile) {
+        return {
+          success: false,
+          error: '缺少 Profile 数据',
+          duration_hours: durationHours,
+        };
+      }
+
+      // 提取关键指标
+      const sub_task_count = profile.sub_task_count || 0;
+      const read_local_sec = profile.read_local_sec || 0;
+      const read_local_mb = profile.read_local_mb || 0;
+      const read_remote_sec = profile.read_remote_sec || 0;
+      const read_remote_mb = profile.read_remote_mb || 0;
+      const in_queue_sec = profile.in_queue_sec || 0;
+
+      const total_sec = durationHours * 3600;
+
+      // 计算各阶段占比
+      const queue_ratio = total_sec > 0 ? (in_queue_sec / total_sec) * 100 : 0;
+      const read_local_ratio =
+        total_sec > 0 ? (read_local_sec / total_sec) * 100 : 0;
+      const read_remote_ratio =
+        total_sec > 0 ? (read_remote_sec / total_sec) * 100 : 0;
+
+      // 计算吞吐量
+      const local_throughput_mb_per_sec =
+        read_local_sec > 0 ? read_local_mb / read_local_sec : 0;
+      const remote_throughput_mb_per_sec =
+        read_remote_sec > 0 ? read_remote_mb / read_remote_sec : 0;
+
+      // 识别瓶颈
+      let bottleneck = 'unknown';
+      let bottleneck_desc = '';
+
+      if (queue_ratio > 50) {
+        bottleneck = 'queue_wait';
+        bottleneck_desc = `排队等待时间过长 (${queue_ratio.toFixed(1)}%)`;
+      } else if (read_remote_ratio > 50) {
+        bottleneck = 'remote_read';
+        bottleneck_desc = `对象存储读取耗时长 (${read_remote_ratio.toFixed(1)}%), 吞吐量 ${remote_throughput_mb_per_sec.toFixed(1)} MB/s`;
+      } else if (read_local_ratio > 30) {
+        bottleneck = 'local_read';
+        bottleneck_desc = `本地缓存读取耗时长 (${read_local_ratio.toFixed(1)}%)`;
+      } else {
+        bottleneck = 'other';
+        bottleneck_desc = '其他原因 (可能是 CPU/内存/写入等)';
+      }
+
+      return {
+        success: true,
+        duration_hours: durationHours,
+        duration_sec: total_sec,
+        metrics: {
+          sub_task_count,
+          read_local_sec,
+          read_local_mb,
+          read_remote_sec,
+          read_remote_mb,
+          in_queue_sec,
+        },
+        ratios: {
+          queue_ratio: queue_ratio.toFixed(1) + '%',
+          read_local_ratio: read_local_ratio.toFixed(1) + '%',
+          read_remote_ratio: read_remote_ratio.toFixed(1) + '%',
+        },
+        throughput: {
+          local_mb_per_sec: local_throughput_mb_per_sec.toFixed(1),
+          remote_mb_per_sec: remote_throughput_mb_per_sec.toFixed(1),
+        },
+        bottleneck: {
+          type: bottleneck,
+          description: bottleneck_desc,
+        },
+      };
+    } catch (error) {
+      console.error('分析 Job Profile 失败:', error);
+      return {
+        success: false,
+        error: error.message,
+        duration_hours: durationHours,
+      };
+    }
+  }
+
+  /**
+   * 分析单个 Compaction Job 的性能 (旧版本，保持兼容)
+   * 通过 Profile 字段分析 Job 执行慢的原因
+   */
+  async analyzeCompactionJobPerformance(job) {
+    try {
+      // 只分析已完成的 Job
+      if (!job.finish_time || !job.start_time) {
+        return null;
+      }
+
+      // 计算总耗时
+      const startTime = new Date(job.start_time);
+      const finishTime = new Date(job.finish_time);
+      const durationSec = (finishTime - startTime) / 1000;
+
+      // 只分析耗时超过 60s 的 Job
+      if (durationSec < 60) {
+        return null;
+      }
+
+      console.error(
+        `   🔍 分析 Job ${job.txn_id || job.tablet_id}: 耗时 ${durationSec.toFixed(1)}s`,
+      );
+
+      // 解析 Profile 字段 (JSON 格式)
+      let profile = null;
+      if (job.profile) {
+        try {
+          profile =
+            typeof job.profile === 'string'
+              ? JSON.parse(job.profile)
+              : job.profile;
+        } catch (error) {
+          console.warn('   ⚠️ Profile 解析失败:', error.message);
+          return null;
+        }
+      }
+
+      if (!profile) {
+        return {
+          job_id: job.txn_id || job.tablet_id,
+          duration_sec: durationSec,
+          has_profile: false,
+          bottleneck: 'unknown',
+          description: 'Job 耗时较长但缺少 Profile 数据',
+        };
+      }
+
+      // 提取关键性能指标
+      const metrics = {
+        sub_task_count: profile.sub_task_count || 0,
+        read_local_sec: profile.read_local_sec || 0,
+        read_local_mb: profile.read_local_mb || 0,
+        read_remote_sec: profile.read_remote_sec || 0,
+        read_remote_mb: profile.read_remote_mb || 0,
+        write_remote_sec: profile.write_remote_sec || 0,
+        write_remote_mb: profile.write_remote_mb || 0,
+        in_queue_sec: profile.in_queue_sec || 0,
+        merge_sec: profile.merge_sec || 0, // 可选：合并耗时
+        total_sec: durationSec,
+      };
+
+      // 计算各阶段占比
+      const phases = {
+        queue_ratio: metrics.in_queue_sec / durationSec,
+        read_local_ratio: metrics.read_local_sec / durationSec,
+        read_remote_ratio: metrics.read_remote_sec / durationSec,
+        write_remote_ratio: metrics.write_remote_sec / durationSec,
+        merge_ratio: metrics.merge_sec / durationSec,
+      };
+
+      // 分析性能瓶颈
+      const bottleneck = this.identifyCompactionBottleneck(
+        metrics,
+        phases,
+        durationSec,
+      );
+
+      // 计算吞吐量
+      const throughput = {
+        read_local_mbps:
+          metrics.read_local_sec > 0
+            ? (metrics.read_local_mb / metrics.read_local_sec).toFixed(2)
+            : 'N/A',
+        read_remote_mbps:
+          metrics.read_remote_sec > 0
+            ? (metrics.read_remote_mb / metrics.read_remote_sec).toFixed(2)
+            : 'N/A',
+        write_remote_mbps:
+          metrics.write_remote_sec > 0
+            ? (metrics.write_remote_mb / metrics.write_remote_sec).toFixed(2)
+            : 'N/A',
+      };
+
+      const analysis = {
+        job_id: job.txn_id || job.tablet_id,
+        partition_name: job.partition_name,
+        duration_sec: durationSec,
+        has_profile: true,
+        metrics,
+        phases: {
+          queue_pct: (phases.queue_ratio * 100).toFixed(1),
+          read_local_pct: (phases.read_local_ratio * 100).toFixed(1),
+          read_remote_pct: (phases.read_remote_ratio * 100).toFixed(1),
+          write_remote_pct: (phases.write_remote_ratio * 100).toFixed(1),
+          merge_pct: (phases.merge_ratio * 100).toFixed(1),
+        },
+        throughput,
+        bottleneck,
+        is_slow: durationSec > 300, // 超过 5 分钟算慢
+      };
+
+      console.error(
+        `   → 瓶颈: ${bottleneck.type} (${bottleneck.description})`,
+      );
+
+      return analysis;
+    } catch (error) {
+      console.warn('分析 Compaction Job 性能失败:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * 识别 Compaction 性能瓶颈
+   */
+  identifyCompactionBottleneck(metrics, phases, totalSec) {
+    const bottlenecks = [];
+
+    // 1. 排队时间过长
+    if (phases.queue_ratio > 0.5) {
+      bottlenecks.push({
+        type: 'queue_wait',
+        severity: 'HIGH',
+        description: `任务排队时间过长 (${metrics.in_queue_sec.toFixed(1)}s, ${(phases.queue_ratio * 100).toFixed(1)}%)`,
+        impact: 'Compaction 任务队列拥堵，可能需要增加 max_tasks 或优化调度',
+        recommendation: '增加 lake_compaction_max_tasks 配置值',
+      });
+    } else if (phases.queue_ratio > 0.3) {
+      bottlenecks.push({
+        type: 'queue_wait',
+        severity: 'MEDIUM',
+        description: `任务排队时间较长 (${metrics.in_queue_sec.toFixed(1)}s, ${(phases.queue_ratio * 100).toFixed(1)}%)`,
+        impact: 'Compaction 调度有一定延迟',
+        recommendation: '监控队列长度，考虑适度增加 max_tasks',
+      });
+    }
+
+    // 2. 远程读取慢
+    if (phases.read_remote_ratio > 0.4 && metrics.read_remote_sec > 60) {
+      const mbps =
+        metrics.read_remote_sec > 0
+          ? metrics.read_remote_mb / metrics.read_remote_sec
+          : 0;
+      bottlenecks.push({
+        type: 'slow_remote_read',
+        severity: mbps < 50 ? 'HIGH' : 'MEDIUM',
+        description: `对象存储读取慢 (${metrics.read_remote_sec.toFixed(1)}s, ${metrics.read_remote_mb.toFixed(0)}MB, ${mbps.toFixed(1)} MB/s)`,
+        impact: '对象存储 I/O 性能不足或网络带宽受限',
+        recommendation:
+          mbps < 50
+            ? '检查对象存储性能和网络带宽，考虑使用更高性能的存储'
+            : '适当增加本地缓存以减少远程读取',
+      });
+    }
+
+    // 3. 远程写入慢
+    if (phases.write_remote_ratio > 0.4 && metrics.write_remote_sec > 60) {
+      const mbps =
+        metrics.write_remote_sec > 0
+          ? metrics.write_remote_mb / metrics.write_remote_sec
+          : 0;
+      bottlenecks.push({
+        type: 'slow_remote_write',
+        severity: mbps < 30 ? 'HIGH' : 'MEDIUM',
+        description: `对象存储写入慢 (${metrics.write_remote_sec.toFixed(1)}s, ${metrics.write_remote_mb.toFixed(0)}MB, ${mbps.toFixed(1)} MB/s)`,
+        impact: '对象存储写入性能不足',
+        recommendation:
+          mbps < 30
+            ? '检查对象存储写入性能，考虑升级存储服务'
+            : '监控对象存储性能指标',
+      });
+    }
+
+    // 4. 本地缓存命中率低
+    const totalReadMB = metrics.read_local_mb + metrics.read_remote_mb;
+    const cacheHitRatio =
+      totalReadMB > 0 ? metrics.read_local_mb / totalReadMB : 0;
+    if (cacheHitRatio < 0.2 && metrics.read_remote_mb > 100) {
+      bottlenecks.push({
+        type: 'low_cache_hit',
+        severity: 'MEDIUM',
+        description: `本地缓存命中率低 (${(cacheHitRatio * 100).toFixed(1)}%, 远程读取 ${metrics.read_remote_mb.toFixed(0)}MB)`,
+        impact: '大量数据从对象存储读取，增加延迟',
+        recommendation: '增加 BE 节点的缓存容量配置',
+      });
+    }
+
+    // 5. 数据量大导致的正常慢
+    const totalDataMB =
+      metrics.read_local_mb + metrics.read_remote_mb + metrics.write_remote_mb;
+    if (totalDataMB > 10000 && bottlenecks.length === 0) {
+      bottlenecks.push({
+        type: 'large_data_volume',
+        severity: 'INFO',
+        description: `数据量大 (总计 ${(totalDataMB / 1024).toFixed(1)}GB)，耗时在合理范围`,
+        impact: '无显著性能问题，耗时主要由数据量决定',
+        recommendation: '这是正常情况，可以继续监控',
+      });
+    }
+
+    // 6. 如果没有明显瓶颈但耗时很长
+    if (bottlenecks.length === 0 && totalSec > 300) {
+      bottlenecks.push({
+        type: 'unknown_slow',
+        severity: 'MEDIUM',
+        description: `耗时较长 (${totalSec.toFixed(1)}s) 但无明显瓶颈`,
+        impact: '可能存在其他性能问题',
+        recommendation: '查看 BE 节点日志和系统资源使用情况',
+      });
+    }
+
+    // 返回最严重的瓶颈
+    if (bottlenecks.length > 0) {
+      bottlenecks.sort((a, b) => {
+        const severityOrder = { HIGH: 3, MEDIUM: 2, INFO: 1, LOW: 0 };
+        return (
+          (severityOrder[b.severity] || 0) - (severityOrder[a.severity] || 0)
+        );
+      });
+      return bottlenecks[0];
+    }
+
+    return {
+      type: 'normal',
+      severity: 'INFO',
+      description: '性能正常',
+      impact: '无明显性能问题',
+      recommendation: '继续监控',
+    };
+  }
+
+  /**
+   * 分析未完成的 Compaction Job（FinishTime 为空）
+   * 查询该 job 的所有 task，分析未完成原因
+   */
+  async analyzeUnfinishedCompactionJob(connection, job) {
+    try {
+      if (!job.txn_id) {
+        console.warn('   ⚠️ Job 缺少 TxnID，无法分析');
+        return null;
+      }
+
+      console.error(`   🔍 分析未完成 Job (TxnID=${job.txn_id})...`);
+
+      // 查询该 Job 的所有 Task
+      const query = `
+        SELECT
+          TXN_ID,
+          TABLET_ID,
+          BE_ID,
+          START_TIME,
+          FINISH_TIME,
+          PROGRESS,
+          RUNS,
+          STATE,
+          ERROR_MSG
+        FROM information_schema.be_cloud_native_compactions
+        WHERE TXN_ID = ?
+        ORDER BY TABLET_ID
+      `;
+
+      const [tasks] = await connection.query(query, [job.txn_id]);
+
+      if (!tasks || tasks.length === 0) {
+        return {
+          job_id: job.txn_id,
+          total_tasks: 0,
+          status: 'no_tasks_found',
+          description: '未找到该 Job 的 Task 记录，可能已被清理或尚未创建',
+        };
+      }
+
+      const totalTasks = tasks.length;
+
+      // 分类统计
+      const completedTasks = tasks.filter((t) => t.PROGRESS === 100);
+      const runningTasks = tasks.filter(
+        (t) => t.PROGRESS < 100 && t.START_TIME && !t.FINISH_TIME,
+      );
+      const pendingTasks = tasks.filter((t) => !t.START_TIME);
+      const failedTasks = tasks.filter(
+        (t) => t.STATE === 'FAILED' || t.ERROR_MSG,
+      );
+
+      // 分析重试情况
+      const highRetryTasks = tasks.filter((t) => t.RUNS > 3);
+      const mediumRetryTasks = tasks.filter((t) => t.RUNS >= 2 && t.RUNS <= 3);
+
+      // 按 BE 分组统计重试任务
+      const retryTasksByBE = {};
+      highRetryTasks.forEach((task) => {
+        const beId = task.BE_ID;
+        if (!retryTasksByBE[beId]) {
+          retryTasksByBE[beId] = { high_retry_count: 0, tasks: [] };
+        }
+        retryTasksByBE[beId].high_retry_count++;
+        retryTasksByBE[beId].tasks.push({
+          tablet_id: task.TABLET_ID,
+          runs: task.RUNS,
+          progress: task.PROGRESS,
+        });
+      });
+
+      // 识别问题
+      const issues = [];
+
+      // 1. 大量任务未开始（START_TIME 为空）
+      if (pendingTasks.length > 0) {
+        const pendingRatio = pendingTasks.length / totalTasks;
+        issues.push({
+          type: 'tasks_not_started',
+          severity: pendingRatio > 0.5 ? 'HIGH' : 'MEDIUM',
+          description: `${pendingTasks.length}/${totalTasks} 个 Task 未开始执行 (${(pendingRatio * 100).toFixed(1)}%)`,
+          impact: '任务在队列中等待，未被调度执行',
+          root_cause: 'BE 节点的 compact_threads 配置可能过小，处理能力不足',
+          affected_be_nodes: [...new Set(pendingTasks.map((t) => t.BE_ID))],
+          recommendation: [
+            '检查 BE 节点的 compact_threads 配置',
+            '考虑增加线程数以提高并发处理能力',
+            '查看 BE 节点资源使用情况（CPU、内存）',
+          ],
+        });
+      }
+
+      // 2. 高重试次数任务（RUNS > 3）
+      if (highRetryTasks.length > 0) {
+        const affectedBEs = Object.keys(retryTasksByBE);
+        issues.push({
+          type: 'high_retry_tasks',
+          severity: 'HIGH',
+          description: `${highRetryTasks.length} 个 Task 重试次数超过 3 次`,
+          impact: '任务反复失败重试，表明存在持续性问题',
+          root_cause: 'BE 节点内存不足导致 Compaction 任务反复失败',
+          affected_be_nodes: affectedBEs,
+          be_retry_details: retryTasksByBE,
+          recommendation: [
+            '检查受影响 BE 节点的内存使用情况',
+            '考虑增加 BE 节点内存或减少其他内存密集型操作',
+            '调整 Compaction 相关内存参数（如单任务内存限制）',
+            '查看 BE 日志中的 OOM 或内存不足相关错误',
+          ],
+        });
+      }
+
+      // 3. 中等重试次数任务（2-3 次）
+      if (mediumRetryTasks.length > 0 && highRetryTasks.length === 0) {
+        issues.push({
+          type: 'medium_retry_tasks',
+          severity: 'MEDIUM',
+          description: `${mediumRetryTasks.length} 个 Task 有 2-3 次重试`,
+          impact: '部分任务遇到临时性问题',
+          root_cause: '可能是内存压力、网络抖动或临时资源竞争',
+          recommendation: [
+            '监控 BE 节点资源使用趋势',
+            '检查是否有其他高负载操作与 Compaction 冲突',
+          ],
+        });
+      }
+
+      // 4. 失败任务
+      if (failedTasks.length > 0) {
+        const errorMessages = [
+          ...new Set(failedTasks.map((t) => t.ERROR_MSG).filter((msg) => msg)),
+        ];
+        issues.push({
+          type: 'failed_tasks',
+          severity: 'CRITICAL',
+          description: `${failedTasks.length} 个 Task 处于失败状态`,
+          impact: 'Job 无法完成，Compaction Score 将继续上升',
+          error_messages: errorMessages.slice(0, 3), // 最多显示 3 种错误
+          recommendation: [
+            '查看具体错误信息定位根因',
+            '检查数据完整性和元数据状态',
+            '考虑手动清理问题数据或重启相关 BE 节点',
+          ],
+        });
+      }
+
+      // 5. 进度缓慢的运行中任务
+      const slowRunningTasks = runningTasks.filter((t) => {
+        if (!t.START_TIME) return false;
+        const startTime = new Date(t.START_TIME);
+        const now = new Date();
+        const durationMin = (now - startTime) / (1000 * 60);
+        const progress = t.PROGRESS || 0;
+        const progressRate = durationMin > 0 ? progress / durationMin : 0;
+        return durationMin > 10 && progressRate < 5; // 运行超过 10 分钟且进度速率 < 5%/分钟
+      });
+
+      if (slowRunningTasks.length > 0) {
+        issues.push({
+          type: 'slow_running_tasks',
+          severity: 'MEDIUM',
+          description: `${slowRunningTasks.length} 个 Task 运行缓慢`,
+          impact: '整体 Job 完成时间被拉长',
+          recommendation: [
+            '检查这些 Task 所在 BE 节点的 I/O 性能',
+            '查看对象存储访问延迟',
+            '确认是否有大量数据需要处理',
+          ],
+        });
+      }
+
+      // 综合评估
+      let overallStatus = 'running';
+      let overallSeverity = 'INFO';
+
+      if (failedTasks.length > 0) {
+        overallStatus = 'failing';
+        overallSeverity = 'CRITICAL';
+      } else if (highRetryTasks.length > 0) {
+        overallStatus = 'struggling';
+        overallSeverity = 'HIGH';
+      } else if (pendingTasks.length > totalTasks * 0.5) {
+        overallStatus = 'stuck';
+        overallSeverity = 'HIGH';
+      } else if (runningTasks.length > 0) {
+        overallStatus = 'progressing';
+        overallSeverity = 'INFO';
+      }
+
+      const analysis = {
+        job_id: job.txn_id,
+        partition_name: job.partition_name,
+        overall_status: overallStatus,
+        overall_severity: overallSeverity,
+        statistics: {
+          total_tasks: totalTasks,
+          completed_tasks: completedTasks.length,
+          running_tasks: runningTasks.length,
+          pending_tasks: pendingTasks.length,
+          failed_tasks: failedTasks.length,
+          completion_ratio:
+            ((completedTasks.length / totalTasks) * 100).toFixed(1) + '%',
+        },
+        retry_analysis: {
+          high_retry_tasks: highRetryTasks.length,
+          medium_retry_tasks: mediumRetryTasks.length,
+          affected_be_count: Object.keys(retryTasksByBE).length,
+          be_details: retryTasksByBE,
+        },
+        issues: issues,
+        summary: this.generateUnfinishedJobSummary(
+          overallStatus,
+          issues,
+          totalTasks,
+          completedTasks.length,
+        ),
+      };
+
+      console.error(
+        `   → 状态: ${overallStatus}, 完成进度: ${analysis.statistics.completion_ratio}, 发现 ${issues.length} 个问题`,
+      );
+
+      return analysis;
+    } catch (error) {
+      console.warn('分析未完成 Job 失败:', error.message);
+      return {
+        job_id: job.txn_id,
+        error: error.message,
+        status: 'analysis_failed',
+      };
+    }
+  }
+
+  /**
+   * 生成未完成 Job 的摘要说明
+   */
+  generateUnfinishedJobSummary(status, issues, totalTasks, completedTasks) {
+    const statusDescriptions = {
+      running: '正常运行中',
+      progressing: '正在推进',
+      stuck: '任务调度受阻',
+      struggling: '任务执行困难（高重试）',
+      failing: '存在失败任务',
+    };
+
+    const baseDesc = statusDescriptions[status] || '状态未知';
+    const progressDesc = `${completedTasks}/${totalTasks} 个 Task 已完成`;
+
+    if (issues.length === 0) {
+      return `${baseDesc}，${progressDesc}，未发现明显问题`;
+    }
+
+    const criticalIssues = issues.filter(
+      (i) => i.severity === 'CRITICAL',
+    ).length;
+    const highIssues = issues.filter((i) => i.severity === 'HIGH').length;
+
+    let issueSummary = '';
+    if (criticalIssues > 0) {
+      issueSummary = `发现 ${criticalIssues} 个严重问题`;
+    } else if (highIssues > 0) {
+      issueSummary = `发现 ${highIssues} 个高优先级问题`;
+    } else {
+      issueSummary = `发现 ${issues.length} 个需要关注的问题`;
+    }
+
+    return `${baseDesc}，${progressDesc}，${issueSummary}`;
+  }
+
+  /**
+   * 分析 Compaction 队列情况
+   * 检查有多少分区在等待 compaction，并判断是否因为 lake_compaction_max_tasks 不足
+   */
+  async analyzeCompactionQueue(connection, currentPartitionCS) {
+    try {
+      // 1. 查询所有 CS >= currentPartitionCS 的分区（这些分区优先级更高或相同）
+      const query = `
+        SELECT
+          DB_NAME,
+          TABLE_NAME,
+          PARTITION_NAME,
+          MAX_CS as compaction_score,
+          BUCKETS as bucket_count
+        FROM information_schema.partitions_meta
+        WHERE MAX_CS >= ?
+        ORDER BY MAX_CS DESC
+      `;
+
+      const [partitions] = await connection.query(query, [currentPartitionCS]);
+
+      if (!partitions || partitions.length === 0) {
+        return {
+          partitions_waiting: 0,
+          total_buckets_waiting: 0,
+          is_queue_saturated: false,
+        };
+      }
+
+      // 2. 计算等待的分区总数和总分桶数
+      const partitionsWaiting = partitions.length;
+      const totalBucketsWaiting = partitions.reduce(
+        (sum, p) => sum + (p.bucket_count || 0),
+        0,
+      );
+
+      console.error(
+        `   → 发现 ${partitionsWaiting} 个分区 CS >= ${currentPartitionCS}，总分桶数: ${totalBucketsWaiting}`,
+      );
+
+      // 3. 获取 FE 配置的 lake_compaction_max_tasks
+      const [feConfig] = await connection.query(
+        "ADMIN SHOW FRONTEND CONFIG LIKE 'lake_compaction_max_tasks'",
+      );
+
+      let maxTasks = 100; // 默认值
+      let isAdaptive = false;
+      let recommendedMaxTasks = null;
+
+      if (feConfig && feConfig.length > 0) {
+        const configValue = parseInt(feConfig[0].Value);
+
+        if (configValue === -1) {
+          // 自适应模式：BE/CN 节点数 * 16
+          isAdaptive = true;
+          console.error(`   → lake_compaction_max_tasks = -1 (自适应模式)`);
+
+          // 获取 BE/CN 节点数
+          const nodeCount = await this.getCompactionNodeCount(connection);
+          maxTasks = nodeCount * 16;
+          console.error(
+            `   → 自适应计算: ${nodeCount} 节点 × 16 = ${maxTasks}`,
+          );
+        } else if (configValue === 0) {
+          // 禁用 compaction
+          return {
+            partitions_waiting: partitionsWaiting,
+            total_buckets_waiting: totalBucketsWaiting,
+            is_queue_saturated: true,
+            max_tasks_config: 0,
+            is_adaptive: false,
+            saturation_reason:
+              'Compaction 已被禁用 (lake_compaction_max_tasks = 0)',
+          };
+        } else {
+          maxTasks = configValue;
+          console.error(
+            `   → lake_compaction_max_tasks = ${maxTasks} (固定值)`,
+          );
+        }
+      }
+
+      // 4. 判断队列是否饱和
+      // 考虑到每个分区的分桶都需要 compaction job，所以用总分桶数与 max_tasks 对比
+      const isSaturated = totalBucketsWaiting > maxTasks;
+
+      // 5. 计算推荐的 max_tasks 值
+      if (isSaturated && !isAdaptive) {
+        // 如果队列饱和且不是自适应模式，建议调整为能容纳所有等待分区的值
+        recommendedMaxTasks = Math.max(
+          64, // 最小建议值
+          Math.ceil(totalBucketsWaiting * 1.2), // 留 20% 余量
+        );
+      }
+
+      const result = {
+        partitions_waiting: partitionsWaiting,
+        total_buckets_waiting: totalBucketsWaiting,
+        is_queue_saturated: isSaturated,
+        max_tasks_config: maxTasks,
+        is_adaptive: isAdaptive,
+        saturation_ratio: (totalBucketsWaiting / maxTasks).toFixed(2),
+        recommended_max_tasks: recommendedMaxTasks,
+      };
+
+      if (isSaturated) {
+        console.error(
+          `   ⚠️ Compaction 队列已饱和: ${totalBucketsWaiting} 个分桶等待 vs ${maxTasks} max_tasks (${result.saturation_ratio}x)`,
+        );
+        if (recommendedMaxTasks) {
+          console.error(
+            `   💡 建议调整 lake_compaction_max_tasks 为: ${recommendedMaxTasks}`,
+          );
+        }
+      } else {
+        console.error(
+          `   ✅ Compaction 队列正常: ${totalBucketsWaiting} 个分桶等待 vs ${maxTasks} max_tasks (${result.saturation_ratio}x)`,
+        );
+      }
+
+      return result;
+    } catch (error) {
+      console.warn('分析 Compaction 队列失败:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * 获取参与 Compaction 的节点数量（BE + CN）
+   */
+  async getCompactionNodeCount(connection) {
+    try {
+      // 获取 BE 节点数
+      const [beNodes] = await connection.query('SHOW BACKENDS');
+      const beCount = beNodes ? beNodes.length : 0;
+
+      // 获取 CN 节点数
+      let cnCount = 0;
+      try {
+        const [cnNodes] = await connection.query('SHOW COMPUTE NODES');
+        cnCount = cnNodes ? cnNodes.length : 0;
+      } catch (error) {
+        // 如果不支持 CN，忽略错误
+        console.warn('获取 CN 节点失败 (可能不支持):', error.message);
+      }
+
+      const totalCount = beCount + cnCount;
+      console.error(
+        `   → 节点统计: ${beCount} BE + ${cnCount} CN = ${totalCount} 节点`,
+      );
+
+      return totalCount;
+    } catch (error) {
+      console.warn('获取节点数量失败:', error.message);
+      return 4; // 返回默认值
+    }
+  }
+
+  /**
+   * 获取指定 Tablet 的 Compaction Score
+   */
+  async getTabletCompactionScore(connection, tabletId) {
+    try {
+      // 从 partitions_meta 表查询该 tablet 所属分区的 compaction score
+      const query = `
+        SELECT MAX_CS as max_compaction_score
+        FROM information_schema.partitions_meta pm
+        WHERE EXISTS (
+          SELECT 1
+          FROM information_schema.tables_config tc
+          WHERE tc.TABLE_ID = pm.TABLE_ID
+            AND tc.TABLET_ID = ?
+        )
+        LIMIT 1
+      `;
+
+      const [rows] = await connection.query(query, [tabletId]);
+
+      if (rows && rows.length > 0) {
+        return rows[0].max_compaction_score;
+      }
+
+      // 如果上面的查询失败，尝试另一种方式
+      const altQuery = `
+        SELECT MAX_CS
+        FROM information_schema.partitions_meta
+        WHERE CONCAT(DB_NAME, '.', TABLE_NAME) IN (
+          SELECT CONCAT(TABLE_SCHEMA, '.', TABLE_NAME)
+          FROM information_schema.tables_config
+          WHERE TABLET_ID = ?
+        )
+        LIMIT 1
+      `;
+
+      const [altRows] = await connection.query(altQuery, [tabletId]);
+
+      if (altRows && altRows.length > 0) {
+        return altRows[0].MAX_CS;
+      }
+
+      return null;
+    } catch (error) {
+      console.warn(
+        `获取 Tablet ${tabletId} Compaction Score 失败:`,
+        error.message,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * 分析慢任务概览
+   */
+  analyzeSlowTasksOverview(slowTasks, totalTasks) {
+    const stalledTasks = slowTasks.filter((t) => t.is_stalled);
+    const verySlowTasks = slowTasks.filter((t) => t.duration_hours > 4);
+
+    // 统计不同 CS 状态的任务
+    const tasksWithJob = slowTasks.filter((t) => t.has_job);
+    const tasksNoJobLowCS = slowTasks.filter(
+      (t) => t.cs_status === 'low_cs_no_job_needed',
+    );
+    const tasksNoJobHighCS = slowTasks.filter(
+      (t) => t.cs_status === 'high_cs_no_job_found',
+    );
+    const tasksNoJobUnknownCS = slowTasks.filter(
+      (t) => !t.has_job && t.cs_status === 'unknown',
+    );
+
+    return {
+      slow_task_ratio:
+        totalTasks > 0
+          ? ((slowTasks.length / totalTasks) * 100).toFixed(1) + '%'
+          : '0%',
+      stalled_tasks_count: stalledTasks.length,
+      very_slow_tasks_count: verySlowTasks.length,
+      severity_level: this.calculateSlowTaskSeverity(slowTasks, totalTasks),
+      // 新增：compaction job 关联统计
+      job_correlation: {
+        tasks_with_job: tasksWithJob.length,
+        tasks_no_job_low_cs: tasksNoJobLowCS.length, // CS < 10, 正常
+        tasks_no_job_high_cs: tasksNoJobHighCS.length, // CS >= 10, 异常
+        tasks_no_job_unknown_cs: tasksNoJobUnknownCS.length,
+      },
+    };
+  }
+
+  /**
+   * 聚合多个 Job 的性能瓶颈统计
+   */
+  aggregateJobBottlenecks(tasksWithJobAnalyses) {
+    const stats = {
+      queue_wait: {
+        count: 0,
+        high_severity_count: 0,
+        avg_queue_ratio: 0,
+        max_queue_sec: 0,
+        samples: [],
+      },
+      slow_remote_read: {
+        count: 0,
+        high_severity_count: 0,
+        avg_throughput: 0,
+        min_throughput: Infinity,
+        total_data_mb: 0,
+        samples: [],
+      },
+      slow_remote_write: {
+        count: 0,
+        high_severity_count: 0,
+        avg_throughput: 0,
+        min_throughput: Infinity,
+        total_data_mb: 0,
+        samples: [],
+      },
+      low_cache_hit: {
+        count: 0,
+        avg_cache_hit_ratio: 0,
+        min_cache_hit_ratio: 100,
+        avg_remote_read_mb: 0,
+        samples: [],
+      },
+      large_data_volume: {
+        count: 0,
+        avg_total_data_mb: 0,
+        max_total_data_mb: 0,
+        samples: [],
+      },
+    };
+
+    const bottleneckCounts = {
+      queue_wait: [],
+      slow_remote_read: [],
+      slow_remote_write: [],
+      low_cache_hit: [],
+      large_data_volume: [],
+    };
+
+    // 遍历所有任务的 job 分析结果
+    tasksWithJobAnalyses.forEach((task) => {
+      // 兼容两种数据结构
+      const jobAnalysesList = task.performance_analysis
+        ? [task.performance_analysis] // 历史任务：单个对象
+        : task.job_analyses || []; // 运行任务：数组
+
+      jobAnalysesList.forEach((jobAnalysis) => {
+        const bottleneck = jobAnalysis.bottleneck;
+        if (!bottleneck) return;
+
+        // 队列等待
+        if (bottleneck.type === 'queue_wait') {
+          stats.queue_wait.count++;
+          if (bottleneck.severity === 'HIGH')
+            stats.queue_wait.high_severity_count++;
+
+          const queueRatio = jobAnalysis.phases.queue_ratio || 0;
+          const queueSec = jobAnalysis.metrics.in_queue_sec || 0;
+          bottleneckCounts.queue_wait.push(queueRatio);
+          stats.queue_wait.max_queue_sec = Math.max(
+            stats.queue_wait.max_queue_sec,
+            queueSec,
+          );
+
+          if (stats.queue_wait.samples.length < 5) {
+            stats.queue_wait.samples.push({
+              tablet_id: task.tablet_id,
+              job_id: jobAnalysis.job_id,
+              queue_sec: queueSec.toFixed(0),
+              queue_ratio: queueRatio.toFixed(1) + '%',
+              severity: bottleneck.severity,
+            });
+          }
+        }
+
+        // 远程读取慢
+        if (bottleneck.type === 'slow_remote_read') {
+          stats.slow_remote_read.count++;
+          if (bottleneck.severity === 'HIGH')
+            stats.slow_remote_read.high_severity_count++;
+
+          const readThroughput =
+            jobAnalysis.throughput.read_remote_mb_per_sec || 0;
+          const readDataMB = jobAnalysis.metrics.read_remote_mb || 0;
+
+          bottleneckCounts.slow_remote_read.push(readThroughput);
+          stats.slow_remote_read.min_throughput = Math.min(
+            stats.slow_remote_read.min_throughput,
+            readThroughput,
+          );
+          stats.slow_remote_read.total_data_mb += readDataMB;
+
+          if (stats.slow_remote_read.samples.length < 5) {
+            stats.slow_remote_read.samples.push({
+              tablet_id: task.tablet_id,
+              job_id: jobAnalysis.job_id,
+              throughput: readThroughput.toFixed(1) + ' MB/s',
+              data_mb: readDataMB.toFixed(0),
+              severity: bottleneck.severity,
+            });
+          }
+        }
+
+        // 远程写入慢
+        if (bottleneck.type === 'slow_remote_write') {
+          stats.slow_remote_write.count++;
+          if (bottleneck.severity === 'HIGH')
+            stats.slow_remote_write.high_severity_count++;
+
+          const writeThroughput =
+            jobAnalysis.throughput.write_remote_mb_per_sec || 0;
+          const writeDataMB = jobAnalysis.metrics.write_remote_mb || 0;
+
+          bottleneckCounts.slow_remote_write.push(writeThroughput);
+          stats.slow_remote_write.min_throughput = Math.min(
+            stats.slow_remote_write.min_throughput,
+            writeThroughput,
+          );
+          stats.slow_remote_write.total_data_mb += writeDataMB;
+
+          if (stats.slow_remote_write.samples.length < 5) {
+            stats.slow_remote_write.samples.push({
+              tablet_id: task.tablet_id,
+              job_id: jobAnalysis.job_id,
+              throughput: writeThroughput.toFixed(1) + ' MB/s',
+              data_mb: writeDataMB.toFixed(0),
+              severity: bottleneck.severity,
+            });
+          }
+        }
+
+        // 缓存命中率低
+        if (bottleneck.type === 'low_cache_hit') {
+          stats.low_cache_hit.count++;
+
+          const cacheHitRatio = jobAnalysis.cache_hit_ratio || 0;
+          const remoteReadMB = jobAnalysis.metrics.read_remote_mb || 0;
+
+          bottleneckCounts.low_cache_hit.push(cacheHitRatio);
+          stats.low_cache_hit.min_cache_hit_ratio = Math.min(
+            stats.low_cache_hit.min_cache_hit_ratio,
+            cacheHitRatio,
+          );
+          stats.low_cache_hit.avg_remote_read_mb += remoteReadMB;
+
+          if (stats.low_cache_hit.samples.length < 5) {
+            stats.low_cache_hit.samples.push({
+              tablet_id: task.tablet_id,
+              job_id: jobAnalysis.job_id,
+              cache_hit_ratio: cacheHitRatio.toFixed(1) + '%',
+              remote_read_mb: remoteReadMB.toFixed(0),
+            });
+          }
+        }
+
+        // 大数据量
+        if (bottleneck.type === 'large_data_volume') {
+          stats.large_data_volume.count++;
+
+          const totalDataMB =
+            (jobAnalysis.metrics.read_remote_mb || 0) +
+            (jobAnalysis.metrics.read_local_mb || 0);
+
+          bottleneckCounts.large_data_volume.push(totalDataMB);
+          stats.large_data_volume.max_total_data_mb = Math.max(
+            stats.large_data_volume.max_total_data_mb,
+            totalDataMB,
+          );
+
+          if (stats.large_data_volume.samples.length < 5) {
+            stats.large_data_volume.samples.push({
+              tablet_id: task.tablet_id,
+              job_id: jobAnalysis.job_id,
+              total_data_gb: (totalDataMB / 1024).toFixed(2),
+              duration_min: jobAnalysis.duration_min.toFixed(1),
+            });
+          }
+        }
+      });
+    });
+
+    // 计算平均值
+    if (bottleneckCounts.queue_wait.length > 0) {
+      stats.queue_wait.avg_queue_ratio =
+        bottleneckCounts.queue_wait.reduce((a, b) => a + b, 0) /
+        bottleneckCounts.queue_wait.length;
+    }
+
+    if (bottleneckCounts.slow_remote_read.length > 0) {
+      stats.slow_remote_read.avg_throughput =
+        bottleneckCounts.slow_remote_read.reduce((a, b) => a + b, 0) /
+        bottleneckCounts.slow_remote_read.length;
+      if (stats.slow_remote_read.min_throughput === Infinity) {
+        stats.slow_remote_read.min_throughput = 0;
+      }
+    }
+
+    if (bottleneckCounts.slow_remote_write.length > 0) {
+      stats.slow_remote_write.avg_throughput =
+        bottleneckCounts.slow_remote_write.reduce((a, b) => a + b, 0) /
+        bottleneckCounts.slow_remote_write.length;
+      if (stats.slow_remote_write.min_throughput === Infinity) {
+        stats.slow_remote_write.min_throughput = 0;
+      }
+    }
+
+    if (bottleneckCounts.low_cache_hit.length > 0) {
+      stats.low_cache_hit.avg_cache_hit_ratio =
+        bottleneckCounts.low_cache_hit.reduce((a, b) => a + b, 0) /
+        bottleneckCounts.low_cache_hit.length;
+      stats.low_cache_hit.avg_remote_read_mb /= stats.low_cache_hit.count;
+    }
+
+    if (bottleneckCounts.large_data_volume.length > 0) {
+      stats.large_data_volume.avg_total_data_mb =
+        bottleneckCounts.large_data_volume.reduce((a, b) => a + b, 0) /
+        bottleneckCounts.large_data_volume.length;
+    }
+
+    return stats;
+  }
+
+  /**
+   * 聚合多个未完成 Job 的问题统计
+   */
+  aggregateUnfinishedJobIssues(tasksWithUnfinishedJobs) {
+    const issues = {
+      tasks_not_started: {
+        count: 0,
+        severity: 'MEDIUM',
+        affected_jobs: 0,
+        total_pending_tasks: 0,
+        affected_be_nodes: new Set(),
+        samples: [],
+      },
+      high_retry_tasks: {
+        count: 0,
+        affected_jobs: 0,
+        total_retry_tasks: 0,
+        max_retry_count: 0,
+        affected_be_nodes: new Set(),
+        be_retry_stats: {},
+        samples: [],
+      },
+      failed_tasks: {
+        count: 0,
+        affected_jobs: 0,
+        total_failed_tasks: 0,
+        error_types: new Set(),
+        sample_errors: [],
+        samples: [],
+      },
+      slow_running_tasks: {
+        count: 0,
+        affected_jobs: 0,
+        total_slow_tasks: 0,
+        avg_progress_rate: 0,
+        progress_rates: [],
+        samples: [],
+      },
+    };
+
+    // 遍历所有任务的未完成 job 分析结果
+    tasksWithUnfinishedJobs.forEach((task) => {
+      task.unfinished_job_analyses.forEach((jobAnalysis) => {
+        if (!jobAnalysis.issues) return;
+
+        // 检查每种问题类型
+        jobAnalysis.issues.forEach((issue) => {
+          switch (issue.type) {
+            case 'tasks_not_started': {
+              if (
+                issues.tasks_not_started.count === 0 ||
+                issue.severity === 'HIGH'
+              ) {
+                issues.tasks_not_started.severity = issue.severity;
+              }
+              issues.tasks_not_started.count++;
+              issues.tasks_not_started.affected_jobs++;
+
+              const pendingCount =
+                parseInt(issue.description.match(/(\d+)\/\d+ 个 Task/)?.[1]) ||
+                0;
+              issues.tasks_not_started.total_pending_tasks += pendingCount;
+
+              if (issue.affected_be_nodes) {
+                issue.affected_be_nodes.forEach((beId) =>
+                  issues.tasks_not_started.affected_be_nodes.add(beId),
+                );
+              }
+
+              if (issues.tasks_not_started.samples.length < 5) {
+                issues.tasks_not_started.samples.push({
+                  job_id: jobAnalysis.job_id,
+                  pending_tasks: pendingCount,
+                  total_tasks: jobAnalysis.statistics?.total_tasks,
+                  severity: issue.severity,
+                });
+              }
+              break;
+            }
+
+            case 'high_retry_tasks': {
+              issues.high_retry_tasks.count++;
+              issues.high_retry_tasks.affected_jobs++;
+
+              const retryCount =
+                parseInt(issue.description.match(/(\d+) 个 Task/)?.[1]) || 0;
+              issues.high_retry_tasks.total_retry_tasks += retryCount;
+
+              if (issue.be_retry_details) {
+                Object.entries(issue.be_retry_details).forEach(
+                  ([beId, details]) => {
+                    issues.high_retry_tasks.affected_be_nodes.add(beId);
+
+                    if (!issues.high_retry_tasks.be_retry_stats[beId]) {
+                      issues.high_retry_tasks.be_retry_stats[beId] = {
+                        high_retry_count: 0,
+                        max_runs: 0,
+                      };
+                    }
+
+                    issues.high_retry_tasks.be_retry_stats[
+                      beId
+                    ].high_retry_count += details.high_retry_count;
+
+                    if (details.tasks && details.tasks.length > 0) {
+                      const maxRuns = Math.max(
+                        ...details.tasks.map((t) => t.runs || 0),
+                      );
+                      issues.high_retry_tasks.be_retry_stats[beId].max_runs =
+                        Math.max(
+                          issues.high_retry_tasks.be_retry_stats[beId].max_runs,
+                          maxRuns,
+                        );
+                      issues.high_retry_tasks.max_retry_count = Math.max(
+                        issues.high_retry_tasks.max_retry_count,
+                        maxRuns,
+                      );
+                    }
+                  },
+                );
+              }
+
+              if (issues.high_retry_tasks.samples.length < 5) {
+                issues.high_retry_tasks.samples.push({
+                  job_id: jobAnalysis.job_id,
+                  retry_tasks: retryCount,
+                  affected_be_nodes: issue.affected_be_nodes || [],
+                });
+              }
+              break;
+            }
+
+            case 'failed_tasks': {
+              issues.failed_tasks.count++;
+              issues.failed_tasks.affected_jobs++;
+
+              const failedCount =
+                parseInt(issue.description.match(/(\d+) 个 Task/)?.[1]) || 0;
+              issues.failed_tasks.total_failed_tasks += failedCount;
+
+              if (issue.error_messages) {
+                issue.error_messages.forEach((msg) => {
+                  if (msg) {
+                    issues.failed_tasks.error_types.add(msg);
+                    if (issues.failed_tasks.sample_errors.length < 5) {
+                      issues.failed_tasks.sample_errors.push({
+                        job_id: jobAnalysis.job_id,
+                        error: msg,
+                      });
+                    }
+                  }
+                });
+              }
+
+              if (issues.failed_tasks.samples.length < 5) {
+                issues.failed_tasks.samples.push({
+                  job_id: jobAnalysis.job_id,
+                  failed_tasks: failedCount,
+                });
+              }
+              break;
+            }
+
+            case 'slow_running_tasks': {
+              issues.slow_running_tasks.count++;
+              issues.slow_running_tasks.affected_jobs++;
+
+              const slowCount =
+                parseInt(issue.description.match(/(\d+) 个 Task/)?.[1]) || 0;
+              issues.slow_running_tasks.total_slow_tasks += slowCount;
+
+              if (issues.slow_running_tasks.samples.length < 5) {
+                issues.slow_running_tasks.samples.push({
+                  job_id: jobAnalysis.job_id,
+                  slow_tasks: slowCount,
+                });
+              }
+              break;
+            }
+          }
+        });
+      });
+    });
+
+    // 转换 Set 为数组
+    issues.tasks_not_started.affected_be_nodes = Array.from(
+      issues.tasks_not_started.affected_be_nodes,
+    );
+    issues.high_retry_tasks.affected_be_nodes = Array.from(
+      issues.high_retry_tasks.affected_be_nodes,
+    );
+    issues.failed_tasks.error_types = Array.from(
+      issues.failed_tasks.error_types,
+    );
+
+    // 计算平均进度速率
+    if (issues.slow_running_tasks.progress_rates.length > 0) {
+      issues.slow_running_tasks.avg_progress_rate =
+        issues.slow_running_tasks.progress_rates.reduce((a, b) => a + b, 0) /
+        issues.slow_running_tasks.progress_rates.length;
+    }
+
+    return issues;
+  }
+
+  /**
+   * 分析慢任务根因
+   */
+  async analyzeSlowTaskRootCauses(connection, slowTasks) {
+    const causes = [];
+
+    // 1. 分析已完成的 Compaction Job 的性能瓶颈
+    // 兼容两种数据结构：
+    // - 历史任务: performance_analysis (单个对象)
+    // - 运行任务: job_analyses (数组)
+    const tasksWithJobAnalyses = slowTasks.filter((t) => {
+      // 历史任务：有 performance_analysis
+      if (t.performance_analysis) return true;
+      // 运行任务：有 job_analyses 数组
+      if (t.job_analyses && t.job_analyses.length > 0) return true;
+      return false;
+    });
+
+    if (tasksWithJobAnalyses.length > 0) {
+      // 收集所有 job 分析中的瓶颈
+      const bottleneckStats =
+        this.aggregateJobBottlenecks(tasksWithJobAnalyses);
+
+      // 队列等待瓶颈
+      if (bottleneckStats.queue_wait.count > 0) {
+        causes.push({
+          type: 'job_profile_queue_wait',
+          severity:
+            bottleneckStats.queue_wait.high_severity_count > 0
+              ? 'HIGH'
+              : 'MEDIUM',
+          description: `${bottleneckStats.queue_wait.count} 个已完成的 Job 存在显著的队列等待时间`,
+          details: {
+            affected_jobs: bottleneckStats.queue_wait.count,
+            high_severity_jobs: bottleneckStats.queue_wait.high_severity_count,
+            avg_queue_ratio:
+              bottleneckStats.queue_wait.avg_queue_ratio.toFixed(1) + '%',
+            max_queue_sec:
+              bottleneckStats.queue_wait.max_queue_sec.toFixed(0) + 's',
+            sample_jobs: bottleneckStats.queue_wait.samples.slice(0, 3),
+          },
+          impact: '任务在队列中等待时间过长，实际执行时间被延迟',
+          root_cause:
+            'Compaction 队列拥塞，可能是 lake_compaction_max_tasks 配置过低或并发任务过多',
+          recommendation: [
+            '检查 lake_compaction_max_tasks 配置是否合理',
+            '考虑调整为自适应模式 (-1) 或提高固定值',
+            '监控集群 Compaction 负载是否持续过高',
+          ],
+        });
+      }
+
+      // 对象存储读取慢瓶颈
+      if (bottleneckStats.slow_remote_read.count > 0) {
+        causes.push({
+          type: 'job_profile_slow_remote_read',
+          severity:
+            bottleneckStats.slow_remote_read.high_severity_count > 0
+              ? 'HIGH'
+              : 'MEDIUM',
+          description: `${bottleneckStats.slow_remote_read.count} 个 Job 的对象存储读取速度慢`,
+          details: {
+            affected_jobs: bottleneckStats.slow_remote_read.count,
+            high_severity_jobs:
+              bottleneckStats.slow_remote_read.high_severity_count,
+            avg_throughput:
+              bottleneckStats.slow_remote_read.avg_throughput.toFixed(1) +
+              ' MB/s',
+            min_throughput:
+              bottleneckStats.slow_remote_read.min_throughput.toFixed(1) +
+              ' MB/s',
+            total_data_read_gb:
+              (bottleneckStats.slow_remote_read.total_data_mb / 1024).toFixed(
+                2,
+              ) + ' GB',
+            sample_jobs: bottleneckStats.slow_remote_read.samples.slice(0, 3),
+          },
+          impact: '从对象存储读取数据耗时过长，显著延长 Compaction 执行时间',
+          root_cause: '对象存储性能不足、网络带宽受限或 Cache 命中率低',
+          recommendation: [
+            '检查对象存储服务（如 S3/OSS）的性能监控指标',
+            '优化网络配置，确保带宽充足',
+            '考虑增加本地缓存容量提高 Cache 命中率',
+            '检查是否存在跨区域访问导致的延迟',
+          ],
+        });
+      }
+
+      // 对象存储写入慢瓶颈
+      if (bottleneckStats.slow_remote_write.count > 0) {
+        causes.push({
+          type: 'job_profile_slow_remote_write',
+          severity:
+            bottleneckStats.slow_remote_write.high_severity_count > 0
+              ? 'HIGH'
+              : 'MEDIUM',
+          description: `${bottleneckStats.slow_remote_write.count} 个 Job 的对象存储写入速度慢`,
+          details: {
+            affected_jobs: bottleneckStats.slow_remote_write.count,
+            high_severity_jobs:
+              bottleneckStats.slow_remote_write.high_severity_count,
+            avg_throughput:
+              bottleneckStats.slow_remote_write.avg_throughput.toFixed(1) +
+              ' MB/s',
+            min_throughput:
+              bottleneckStats.slow_remote_write.min_throughput.toFixed(1) +
+              ' MB/s',
+            total_data_written_gb:
+              (bottleneckStats.slow_remote_write.total_data_mb / 1024).toFixed(
+                2,
+              ) + ' GB',
+            sample_jobs: bottleneckStats.slow_remote_write.samples.slice(0, 3),
+          },
+          impact: '向对象存储写入数据耗时过长，成为 Compaction 性能瓶颈',
+          root_cause: '对象存储写入性能受限或网络上传带宽不足',
+          recommendation: [
+            '检查对象存储的写入性能和带宽限制',
+            '验证网络上传带宽是否充足',
+            '考虑使用性能更好的对象存储服务',
+            '检查是否需要调整对象存储的并发写入配置',
+          ],
+        });
+      }
+
+      // 缓存命中率低瓶颈
+      if (bottleneckStats.low_cache_hit.count > 0) {
+        causes.push({
+          type: 'job_profile_low_cache_hit',
+          severity: 'MEDIUM',
+          description: `${bottleneckStats.low_cache_hit.count} 个 Job 的本地缓存命中率低`,
+          details: {
+            affected_jobs: bottleneckStats.low_cache_hit.count,
+            avg_cache_hit_ratio:
+              bottleneckStats.low_cache_hit.avg_cache_hit_ratio.toFixed(1) +
+              '%',
+            min_cache_hit_ratio:
+              bottleneckStats.low_cache_hit.min_cache_hit_ratio.toFixed(1) +
+              '%',
+            avg_remote_read_gb:
+              (bottleneckStats.low_cache_hit.avg_remote_read_mb / 1024).toFixed(
+                2,
+              ) + ' GB',
+            sample_jobs: bottleneckStats.low_cache_hit.samples.slice(0, 3),
+          },
+          impact: '大量数据需要从对象存储读取，无法利用本地缓存加速',
+          root_cause: '本地缓存容量不足或缓存策略不合理',
+          recommendation: [
+            '检查本地缓存配置，考虑增加缓存容量',
+            '分析缓存淘汰策略是否合理',
+            '监控缓存使用率，确认是否达到上限',
+            '考虑优化热数据的缓存预热',
+          ],
+        });
+      }
+
+      // 大数据量任务（信息性，非真正的瓶颈）
+      if (bottleneckStats.large_data_volume.count > 0) {
+        causes.push({
+          type: 'job_profile_large_data',
+          severity: 'INFO',
+          description: `${bottleneckStats.large_data_volume.count} 个 Job 处理的数据量较大（> 10GB）`,
+          details: {
+            affected_jobs: bottleneckStats.large_data_volume.count,
+            avg_total_data_gb:
+              (
+                bottleneckStats.large_data_volume.avg_total_data_mb / 1024
+              ).toFixed(2) + ' GB',
+            max_total_data_gb:
+              (
+                bottleneckStats.large_data_volume.max_total_data_mb / 1024
+              ).toFixed(2) + ' GB',
+            sample_jobs: bottleneckStats.large_data_volume.samples.slice(0, 3),
+          },
+          impact: '数据量大导致任务执行时间长，但性能指标正常',
+          root_cause: '分区数据量本身较大，属于正常现象',
+          recommendation: [
+            '这是正常情况，可以通过监控观察趋势',
+            '如果数据量持续增长，考虑调整分区策略',
+          ],
+        });
+      }
+    }
+
+    // 2. 分析未完成的 Compaction Job 的 Task 状态
+    const tasksWithUnfinishedJobs = slowTasks.filter(
+      (t) => t.unfinished_job_analyses && t.unfinished_job_analyses.length > 0,
+    );
+    if (tasksWithUnfinishedJobs.length > 0) {
+      // 聚合所有未完成 job 的问题
+      const unfinishedJobIssues = this.aggregateUnfinishedJobIssues(
+        tasksWithUnfinishedJobs,
+      );
+
+      // Task 未开始执行（compact_threads 不足）
+      if (unfinishedJobIssues.tasks_not_started.count > 0) {
+        causes.push({
+          type: 'job_tasks_not_started',
+          severity: unfinishedJobIssues.tasks_not_started.severity,
+          description: `${unfinishedJobIssues.tasks_not_started.total_pending_tasks} 个 Task 未开始执行 (来自 ${unfinishedJobIssues.tasks_not_started.affected_jobs} 个 Job)`,
+          details: {
+            affected_jobs: unfinishedJobIssues.tasks_not_started.affected_jobs,
+            total_pending_tasks:
+              unfinishedJobIssues.tasks_not_started.total_pending_tasks,
+            affected_be_nodes:
+              unfinishedJobIssues.tasks_not_started.affected_be_nodes,
+            sample_jobs: unfinishedJobIssues.tasks_not_started.samples.slice(
+              0,
+              3,
+            ),
+          },
+          impact: 'Task 在 BE 节点队列中等待，无法开始执行',
+          root_cause: 'BE 节点的 compact_threads 配置过小，并发处理能力不足',
+          recommendation: [
+            '检查受影响 BE 节点的 compact_threads 配置',
+            '建议将 compact_threads 增加到 CPU 核数的 50%-100%',
+            '监控 BE 节点的 CPU 使用率，确保有余量',
+            '检查 BE 节点是否有其他高负载任务',
+          ],
+        });
+      }
+
+      // Task 高重试次数（内存不足）
+      if (unfinishedJobIssues.high_retry_tasks.count > 0) {
+        causes.push({
+          type: 'job_tasks_high_retry',
+          severity: 'HIGH',
+          description: `${unfinishedJobIssues.high_retry_tasks.total_retry_tasks} 个 Task 重试次数超过 3 次 (来自 ${unfinishedJobIssues.high_retry_tasks.affected_jobs} 个 Job)`,
+          details: {
+            affected_jobs: unfinishedJobIssues.high_retry_tasks.affected_jobs,
+            total_retry_tasks:
+              unfinishedJobIssues.high_retry_tasks.total_retry_tasks,
+            affected_be_nodes:
+              unfinishedJobIssues.high_retry_tasks.affected_be_nodes,
+            max_retry_count:
+              unfinishedJobIssues.high_retry_tasks.max_retry_count,
+            be_retry_stats: unfinishedJobIssues.high_retry_tasks.be_retry_stats,
+            sample_jobs: unfinishedJobIssues.high_retry_tasks.samples.slice(
+              0,
+              3,
+            ),
+          },
+          impact: 'Task 反复失败重试，导致 Compaction Job 执行时间大幅延长',
+          root_cause: 'BE 节点内存不足，Compaction 任务因 OOM 反复失败',
+          recommendation: [
+            '立即检查受影响 BE 节点的内存使用情况',
+            '查看 BE 日志中的 OOM 或 Memory Limit Exceeded 错误',
+            '考虑增加 BE 节点内存或限制其他内存密集型操作',
+            '调整 Compaction 单任务内存限制参数',
+            '如果内存紧张，可以临时降低 compact_threads 减少并发',
+          ],
+        });
+      }
+
+      // Task 失败
+      if (unfinishedJobIssues.failed_tasks.count > 0) {
+        causes.push({
+          type: 'job_tasks_failed',
+          severity: 'CRITICAL',
+          description: `${unfinishedJobIssues.failed_tasks.total_failed_tasks} 个 Task 处于失败状态 (来自 ${unfinishedJobIssues.failed_tasks.affected_jobs} 个 Job)`,
+          details: {
+            affected_jobs: unfinishedJobIssues.failed_tasks.affected_jobs,
+            total_failed_tasks:
+              unfinishedJobIssues.failed_tasks.total_failed_tasks,
+            error_types: unfinishedJobIssues.failed_tasks.error_types,
+            sample_errors: unfinishedJobIssues.failed_tasks.sample_errors.slice(
+              0,
+              5,
+            ),
+          },
+          impact: 'Compaction Job 无法完成，分区的 Compaction Score 将持续上升',
+          root_cause: '数据损坏、元数据异常、磁盘故障或其他系统级问题',
+          recommendation: [
+            '立即查看详细错误日志定位根本原因',
+            '检查数据文件完整性',
+            '验证元数据一致性',
+            '如果是特定 Tablet 的问题，考虑手动修复或删除',
+            '必要时重启相关 BE 节点',
+          ],
+        });
+      }
+
+      // Task 运行缓慢
+      if (unfinishedJobIssues.slow_running_tasks.count > 0) {
+        causes.push({
+          type: 'job_tasks_slow_running',
+          severity: 'MEDIUM',
+          description: `${unfinishedJobIssues.slow_running_tasks.total_slow_tasks} 个 Task 运行缓慢 (来自 ${unfinishedJobIssues.slow_running_tasks.affected_jobs} 个 Job)`,
+          details: {
+            affected_jobs: unfinishedJobIssues.slow_running_tasks.affected_jobs,
+            total_slow_tasks:
+              unfinishedJobIssues.slow_running_tasks.total_slow_tasks,
+            avg_progress_rate:
+              unfinishedJobIssues.slow_running_tasks.avg_progress_rate.toFixed(
+                1,
+              ) + '%/min',
+          },
+          impact: 'Compaction Job 整体完成时间被显著拉长',
+          root_cause: 'BE 节点 I/O 性能不足、对象存储访问慢或数据量特别大',
+          recommendation: [
+            '检查 BE 节点的磁盘 I/O 性能指标',
+            '验证对象存储访问延迟和吞吐量',
+            '查看这些 Task 对应的 Tablet 数据量',
+            '监控网络带宽使用情况',
+          ],
+        });
+      }
+    }
+
+    // 3. 检查高 CS 但无 job 的异常情况
+    const highCSNoJobTasks = slowTasks.filter(
+      (t) => t.cs_status === 'high_cs_no_job_found',
+    );
+    if (highCSNoJobTasks.length > 0) {
+      // 检查是否有队列分析结果，判断是否因为队列饱和导致
+      const tasksWithQueueAnalysis = highCSNoJobTasks.filter(
+        (t) => t.queue_analysis,
+      );
+      const saturatedTasks = tasksWithQueueAnalysis.filter(
+        (t) => t.queue_analysis.is_queue_saturated,
+      );
+
+      if (saturatedTasks.length > 0) {
+        // 队列饱和是主要原因
+        const sampleQueueAnalysis = saturatedTasks[0].queue_analysis;
+
+        causes.push({
+          type: 'compaction_queue_saturated',
+          severity: 'CRITICAL',
+          description: `Compaction 队列已饱和，导致 ${saturatedTasks.length} 个高 CS 分区无法被调度`,
+          details: {
+            partitions_waiting: sampleQueueAnalysis.partitions_waiting,
+            total_buckets_waiting: sampleQueueAnalysis.total_buckets_waiting,
+            max_tasks_config: sampleQueueAnalysis.max_tasks_config,
+            is_adaptive: sampleQueueAnalysis.is_adaptive,
+            saturation_ratio: sampleQueueAnalysis.saturation_ratio + 'x',
+            recommended_max_tasks: sampleQueueAnalysis.recommended_max_tasks,
+            affected_tasks: saturatedTasks.slice(0, 3).map((t) => ({
+              tablet_id: t.tablet_id,
+              compaction_score: t.compaction_score,
+              buckets_ahead: t.queue_analysis.total_buckets_waiting,
+            })),
+          },
+          impact: `系统中有 ${sampleQueueAnalysis.partitions_waiting} 个分区（共 ${sampleQueueAnalysis.total_buckets_waiting} 个分桶）等待 Compaction，超过 max_tasks 限制 (${sampleQueueAnalysis.max_tasks_config})`,
+          root_cause: sampleQueueAnalysis.is_adaptive
+            ? '自适应模式下计算的 max_tasks 可能不足以处理当前负载'
+            : `lake_compaction_max_tasks 配置值 (${sampleQueueAnalysis.max_tasks_config}) 过低`,
+        });
+
+        // 剩余未饱和的高CS无job任务
+        const nonSaturatedHighCSTasks = highCSNoJobTasks.filter(
+          (t) => !t.queue_analysis || !t.queue_analysis.is_queue_saturated,
+        );
+
+        if (nonSaturatedHighCSTasks.length > 0) {
+          causes.push({
+            type: 'high_cs_no_job_other_reasons',
+            severity: 'HIGH',
+            description: `${nonSaturatedHighCSTasks.length} 个高 CS 分区未找到 Job（非队列饱和原因）`,
+            details: nonSaturatedHighCSTasks.slice(0, 5).map((t) => ({
+              tablet_id: t.tablet_id,
+              compaction_score: t.compaction_score,
+              queue_status: t.queue_analysis ? 'normal' : 'unknown',
+            })),
+            impact: '可能存在调度器异常或通信问题',
+            possible_reasons: [
+              'Compaction 调度器未正常工作',
+              'FE 与 BE 通信异常',
+              '分区元数据异常',
+            ],
+          });
+        }
+      } else {
+        // 没有队列饱和，可能是其他原因
+        causes.push({
+          type: 'high_cs_no_compaction_job',
+          severity: 'CRITICAL',
+          description: `${highCSNoJobTasks.length} 个任务的分区 Compaction Score >= 10 但未找到对应的 Compaction Job`,
+          details: highCSNoJobTasks.slice(0, 5).map((t) => ({
+            tablet_id: t.tablet_id,
+            be_id: t.be_id,
+            compaction_score: t.compaction_score,
+            duration_hours: t.duration_hours.toFixed(2),
+            progress: t.progress + '%',
+            queue_status: t.queue_analysis ? 'analyzed' : 'not_analyzed',
+          })),
+          impact: 'Compaction 调度可能存在问题，导致高 CS 分区未被及时处理',
+          possible_reasons: [
+            'Compaction 调度器未正常工作',
+            'lake_compaction_max_tasks 配置过低',
+            'FE 与 BE 通信异常',
+            '分区元数据异常',
+          ],
+        });
+      }
+    }
+
+    // 检查低 CS 但有慢任务的情况（正常但需要关注）
+    const lowCSNoJobTasks = slowTasks.filter(
+      (t) => t.cs_status === 'low_cs_no_job_needed',
+    );
+    if (lowCSNoJobTasks.length > 0) {
+      causes.push({
+        type: 'low_cs_slow_task',
+        severity: 'INFO',
+        description: `${lowCSNoJobTasks.length} 个任务的分区 CS < 10，无需 Compaction (正常情况)`,
+        details: lowCSNoJobTasks.slice(0, 3).map((t) => ({
+          tablet_id: t.tablet_id,
+          compaction_score: t.compaction_score,
+          note: '此任务可能是其他维护操作，非 Compaction 任务',
+        })),
+        impact: '无影响，这些任务可能不是 Compaction 相关',
+      });
+    }
+
+    // 按 BE 节点分组
+    const tasksByBE = {};
+    slowTasks.forEach((task) => {
+      if (!tasksByBE[task.be_id]) {
+        tasksByBE[task.be_id] = [];
+      }
+      tasksByBE[task.be_id].push(task);
+    });
+
+    // 检查节点过载
+    const overloadedNodes = Object.entries(tasksByBE).filter(
+      ([_, tasks]) => tasks.length > 3,
+    );
+    if (overloadedNodes.length > 0) {
+      causes.push({
+        type: 'node_overload',
+        severity: 'HIGH',
+        description: `${overloadedNodes.length} 个节点存在任务过载`,
+        details: overloadedNodes.map(([beId, tasks]) => ({
+          be_id: beId,
+          slow_tasks_count: tasks.length,
+          avg_duration: (
+            tasks.reduce((sum, t) => sum + t.duration_hours, 0) / tasks.length
+          ).toFixed(2),
+        })),
+        impact: '节点资源竞争导致任务执行缓慢',
+      });
+    }
+
+    // 检查停滞任务
+    const stalledTasks = slowTasks.filter((t) => t.is_stalled);
+    if (stalledTasks.length > 0) {
+      causes.push({
+        type: 'task_stalled',
+        severity: 'CRITICAL',
+        description: `${stalledTasks.length} 个任务进度停滞（进度<50%，重试>3次）`,
+        details: stalledTasks.slice(0, 5).map((t) => ({
+          tablet_id: t.tablet_id,
+          be_id: t.be_id,
+          progress: t.progress + '%',
+          retry_count: t.retry_count,
+          duration_hours: t.duration_hours.toFixed(2),
+        })),
+        impact: '可能存在死锁、资源耗尽或数据异常',
+      });
+    }
+
+    // 检查进度缓慢任务
+    const slowProgressTasks = slowTasks.filter((t) => t.progress_rate < 10); // 每小时进度 < 10%
+    if (slowProgressTasks.length > 0) {
+      causes.push({
+        type: 'slow_progress',
+        severity: 'MEDIUM',
+        description: `${slowProgressTasks.length} 个任务进度推进缓慢（< 10%/小时）`,
+        avg_progress_rate:
+          (
+            slowProgressTasks.reduce((sum, t) => sum + t.progress_rate, 0) /
+            slowProgressTasks.length
+          ).toFixed(2) + '%/hour',
+        impact: '数据量大或 I/O 性能不足',
+      });
+    }
+
+    // 获取线程配置检查
+    try {
+      const threadConfig = await this.getCompactionThreads(connection);
+      if (threadConfig.success && threadConfig.data?.nodes) {
+        const lowThreadNodes = threadConfig.data.nodes.filter(
+          (node) => node.current_threads < 4,
+        );
+        if (lowThreadNodes.length > 0) {
+          causes.push({
+            type: 'insufficient_threads',
+            severity: 'MEDIUM',
+            description: `${lowThreadNodes.length} 个节点 Compaction 线程数过低`,
+            details: lowThreadNodes.map((n) => ({
+              be_id: n.be_id,
+              current_threads: n.current_threads,
+              recommended: Math.max(4, Math.ceil(n.cpu_cores * 0.5)),
+            })),
+            impact: '并发处理能力不足，任务排队等待',
+          });
+        }
+      }
+    } catch (error) {
+      console.warn('检查线程配置失败:', error.message);
+    }
+
+    return causes.length > 0
+      ? causes
+      : [
+          {
+            type: 'unknown',
+            severity: 'LOW',
+            description: '未发现明确的根因，可能是数据复杂度或网络延迟导致',
+            impact: '需要进一步监控和分析',
+          },
+        ];
+  }
+
+  /**
+   * 分析慢任务模式
+   */
+  analyzeSlowTaskPatterns(slowTasks) {
+    const patterns = {
+      by_duration: {
+        '2-4_hours': slowTasks.filter(
+          (t) => t.duration_hours >= 2 && t.duration_hours < 4,
+        ).length,
+        '4-8_hours': slowTasks.filter(
+          (t) => t.duration_hours >= 4 && t.duration_hours < 8,
+        ).length,
+        '8+_hours': slowTasks.filter((t) => t.duration_hours >= 8).length,
+      },
+      by_progress: {
+        low_0_25: slowTasks.filter((t) => t.progress < 25).length,
+        medium_25_50: slowTasks.filter(
+          (t) => t.progress >= 25 && t.progress < 50,
+        ).length,
+        high_50_75: slowTasks.filter((t) => t.progress >= 50 && t.progress < 75)
+          .length,
+        near_complete_75_100: slowTasks.filter((t) => t.progress >= 75).length,
+      },
+      by_retry: {
+        no_retry: slowTasks.filter((t) => t.retry_count === 0).length,
+        low_retry_1_3: slowTasks.filter(
+          (t) => t.retry_count >= 1 && t.retry_count <= 3,
+        ).length,
+        high_retry_4_plus: slowTasks.filter((t) => t.retry_count > 3).length,
+      },
+    };
+
+    return patterns;
+  }
+
+  /**
+   * 分析系统因素
+   */
+  async analyzeSystemFactors(connection) {
+    const factors = {};
+
+    try {
+      // 获取高 CS 分区
+      const highCSPartitions = await this.getHighCompactionPartitions(
+        connection,
+        10,
+        100,
+      );
+      if (highCSPartitions.success) {
+        factors.high_compaction_score = {
+          count: highCSPartitions.data?.partitions?.length || 0,
+          description: 'Compaction Score 高的分区数量',
+          impact: 'CS 高表示待处理任务多，可能影响任务执行速度',
+        };
+      }
+
+      // 获取线程配置
+      const threadConfig = await this.getCompactionThreads(connection);
+      if (threadConfig.success && threadConfig.data?.nodes) {
+        const avgThreads =
+          threadConfig.data.nodes.reduce(
+            (sum, n) => sum + n.current_threads,
+            0,
+          ) / threadConfig.data.nodes.length;
+        factors.thread_configuration = {
+          avg_threads_per_node: avgThreads.toFixed(1),
+          total_nodes: threadConfig.data.nodes.length,
+          description: '集群平均 Compaction 线程数配置',
+        };
+      }
+    } catch (error) {
+      console.warn('分析系统因素失败:', error.message);
+    }
+
+    return factors;
+  }
+
+  /**
+   * 计算慢任务性能指标
+   */
+  calculateSlowTaskMetrics(slowTasks) {
+    if (slowTasks.length === 0) {
+      return null;
+    }
+
+    const durations = slowTasks.map((t) => t.duration_hours);
+    const progresses = slowTasks.map((t) => t.progress);
+    const progressRates = slowTasks.map((t) => t.progress_rate);
+
+    return {
+      duration: {
+        min: Math.min(...durations).toFixed(2),
+        max: Math.max(...durations).toFixed(2),
+        avg: (durations.reduce((a, b) => a + b, 0) / durations.length).toFixed(
+          2,
+        ),
+        median: this.calculateMedian(durations).toFixed(2),
+      },
+      progress: {
+        min: Math.min(...progresses),
+        max: Math.max(...progresses),
+        avg: (
+          progresses.reduce((a, b) => a + b, 0) / progresses.length
+        ).toFixed(1),
+      },
+      progress_rate: {
+        min: Math.min(...progressRates).toFixed(2),
+        max: Math.max(...progressRates).toFixed(2),
+        avg: (
+          progressRates.reduce((a, b) => a + b, 0) / progressRates.length
+        ).toFixed(2),
+      },
+    };
+  }
+
+  /**
+   * 计算中位数
+   */
+  calculateMedian(arr) {
+    const sorted = arr.slice().sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2
+      ? sorted[mid]
+      : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+
+  /**
+   * 计算慢任务严重程度
+   */
+  calculateSlowTaskSeverity(slowTasks, totalTasks) {
+    const ratio = totalTasks > 0 ? slowTasks.length / totalTasks : 0;
+    const stalledCount = slowTasks.filter((t) => t.is_stalled).length;
+    const verySlowCount = slowTasks.filter((t) => t.duration_hours > 4).length;
+
+    if (stalledCount > 0 || verySlowCount > slowTasks.length * 0.5) {
+      return 'CRITICAL';
+    } else if (ratio > 0.3 || verySlowCount > 0) {
+      return 'HIGH';
+    } else if (ratio > 0.1) {
+      return 'MEDIUM';
+    } else {
+      return 'LOW';
+    }
+  }
+
+  /**
+   * 生成慢任务诊断结论
+   */
+  generateSlowTaskDiagnosis(analysis) {
+    const diagnosis = {
+      severity: analysis.overview.severity_level,
+      primary_issues: [],
+      contributing_factors: [],
+    };
+
+    // 主要问题
+    analysis.root_causes.forEach((cause) => {
+      if (cause.severity === 'CRITICAL' || cause.severity === 'HIGH') {
+        diagnosis.primary_issues.push({
+          type: cause.type,
+          description: cause.description,
+          impact: cause.impact,
+        });
+      } else {
+        diagnosis.contributing_factors.push({
+          type: cause.type,
+          description: cause.description,
+        });
+      }
+    });
+
+    // 综合诊断
+    if (analysis.overview.stalled_tasks_count > 0) {
+      diagnosis.conclusion = `检测到 ${analysis.overview.stalled_tasks_count} 个停滞任务，需要立即处理`;
+    } else if (analysis.overview.very_slow_tasks_count > 0) {
+      diagnosis.conclusion = `存在 ${analysis.overview.very_slow_tasks_count} 个超长运行任务（>4小时），建议优化配置`;
+    } else {
+      diagnosis.conclusion = `慢任务比例为 ${analysis.overview.slow_task_ratio}，处于可接受范围`;
+    }
+
+    return diagnosis;
+  }
+
+  /**
+   * 生成慢任务优化建议
+   */
+  generateSlowTaskRecommendations(analysis, diagnosis) {
+    const recommendations = [];
+
+    // 根据根因生成建议
+    analysis.root_causes.forEach((cause) => {
+      switch (cause.type) {
+        case 'compaction_queue_saturated': {
+          const queueDetails = cause.details;
+          const actions = [];
+
+          if (queueDetails.is_adaptive) {
+            // 自适应模式
+            actions.push(
+              `当前为自适应模式 (节点数 × 16)，实际 max_tasks = ${queueDetails.max_tasks_config}`,
+              `系统中有 ${queueDetails.total_buckets_waiting} 个分桶等待，饱和度 ${queueDetails.saturation_ratio}`,
+              '建议考虑以下方案：',
+              '  1. 扩容 BE/CN 节点数量以提高自适应计算的 max_tasks 值',
+              '  2. 或改为固定值模式，设置更大的 lake_compaction_max_tasks',
+              `     推荐值: SET GLOBAL lake_compaction_max_tasks = ${queueDetails.recommended_max_tasks || queueDetails.total_buckets_waiting}`,
+            );
+          } else {
+            // 固定值模式
+            actions.push(
+              `当前 lake_compaction_max_tasks = ${queueDetails.max_tasks_config} (固定值)`,
+              `系统中有 ${queueDetails.total_buckets_waiting} 个分桶等待，饱和度 ${queueDetails.saturation_ratio}`,
+              '立即调整 lake_compaction_max_tasks 参数：',
+              `  推荐值: SET GLOBAL lake_compaction_max_tasks = ${queueDetails.recommended_max_tasks}`,
+              '  或设置为自适应模式: SET GLOBAL lake_compaction_max_tasks = -1',
+            );
+          }
+
+          actions.push(
+            '调整后监控 Compaction 任务调度情况',
+            '检查 FE 资源使用，确保有足够的 CPU 和内存处理更多任务',
+          );
+
+          recommendations.push({
+            priority: 'CRITICAL',
+            category: 'capacity_planning',
+            title: '扩容 Compaction 任务队列',
+            description: `Compaction 队列已饱和 (${queueDetails.saturation_ratio})，需要立即扩容`,
+            actions,
+          });
+          break;
+        }
+
+        case 'high_cs_no_job_other_reasons':
+          recommendations.push({
+            priority: 'HIGH',
+            category: 'compaction_scheduling',
+            title: '排查 Compaction 调度异常',
+            description: '高 CS 分区未被调度，但队列未饱和，需要排查调度器问题',
+            actions: [
+              '检查 FE 日志中的 Compaction 调度器错误或警告',
+              '验证 FE 与 BE 节点之间的网络连通性',
+              "查看 SHOW PROC '/compactions' 确认调度状态",
+              '检查分区元数据是否正常: SELECT * FROM information_schema.partitions_meta',
+              '考虑重启 FE 以重置调度器状态（谨慎操作）',
+            ],
+          });
+          break;
+
+        case 'high_cs_no_compaction_job':
+          recommendations.push({
+            priority: 'CRITICAL',
+            category: 'compaction_scheduling',
+            title: '修复 Compaction 调度问题',
+            description: '存在高 CS 分区但未被调度执行 Compaction',
+            actions: [
+              '检查 FE 日志中的 Compaction 调度器错误信息',
+              '确认 lake_compaction_max_tasks 参数配置 (建议 >= 64)',
+              '检查 FE 与 BE 节点之间的网络连接',
+              "查看 SHOW PROC '/compactions' 确认任务调度状态",
+              '考虑手动触发 Compaction: ALTER TABLE xxx COMPACT',
+              '检查 FE 是否有足够的资源进行任务调度',
+            ],
+          });
+          break;
+
+        case 'low_cs_slow_task':
+          // 这是信息类，不需要建议
+          break;
+
+        case 'node_overload':
+          recommendations.push({
+            priority: 'HIGH',
+            category: 'load_balancing',
+            title: '优化节点负载均衡',
+            description: '部分节点任务过载，建议调整 Compaction 任务分配策略',
+            actions: [
+              '检查过载节点的硬件资源使用情况',
+              '考虑增加过载节点的 Compaction 线程数',
+              '评估是否需要扩容 BE 节点',
+            ],
+          });
+          break;
+
+        case 'task_stalled':
+          recommendations.push({
+            priority: 'CRITICAL',
+            category: 'task_recovery',
+            title: '处理停滞任务',
+            description: '存在进度停滞的任务，可能需要人工干预',
+            actions: [
+              '检查停滞任务的 Tablet 状态和错误日志',
+              '考虑手动取消长时间停滞的任务',
+              '检查是否存在死锁或资源耗尽问题',
+              '评估是否需要调整 lake_compaction_max_tasks 参数',
+            ],
+          });
+          break;
+
+        case 'slow_progress':
+          recommendations.push({
+            priority: 'MEDIUM',
+            category: 'performance_tuning',
+            title: '优化任务执行性能',
+            description: '任务进度推进缓慢，建议优化 I/O 和计算资源',
+            actions: [
+              '检查 S3 或对象存储的访问延迟',
+              '评估 BE 节点的 CPU 和内存使用情况',
+              '考虑增加 Compaction 线程数以提高并发',
+              '检查网络带宽是否成为瓶颈',
+            ],
+          });
+          break;
+
+        case 'insufficient_threads':
+          recommendations.push({
+            priority: 'HIGH',
+            category: 'configuration',
+            title: '增加 Compaction 线程数',
+            description: '部分节点线程配置过低，限制了并发处理能力',
+            actions: cause.details.map(
+              (detail) =>
+                `节点 ${detail.be_id}: 当前 ${detail.current_threads} 线程，建议调整为 ${detail.recommended} 线程`,
+            ),
+          });
+          break;
+      }
+    });
+
+    // 通用建议
+    if (diagnosis.severity === 'HIGH' || diagnosis.severity === 'CRITICAL') {
+      recommendations.push({
+        priority: 'MEDIUM',
+        category: 'monitoring',
+        title: '加强监控和告警',
+        description: '建立 Compaction 任务监控体系',
+        actions: [
+          '设置慢任务告警阈值（建议 2 小时）',
+          '监控 Compaction Score 趋势',
+          '定期检查任务执行统计和成功率',
+          '建立 Compaction 性能基线',
+        ],
+      });
+    }
+
+    return recommendations;
+  }
+
+  /**
+   * 生成慢任务行动计划
+   */
+  generateSlowTaskActionPlan(diagnosis, recommendations) {
+    const actionPlan = {
+      immediate_actions: [],
+      short_term_actions: [],
+      long_term_actions: [],
+    };
+
+    recommendations.forEach((rec) => {
+      const action = {
+        title: rec.title,
+        category: rec.category,
+        steps: rec.actions,
+      };
+
+      if (rec.priority === 'CRITICAL') {
+        actionPlan.immediate_actions.push(action);
+      } else if (rec.priority === 'HIGH') {
+        actionPlan.short_term_actions.push(action);
+      } else {
+        actionPlan.long_term_actions.push(action);
+      }
+    });
+
+    return actionPlan;
+  }
+
+  /**
    * 分析正在运行的任务
    */
   analyzeRunningTasks(tasks) {
@@ -3581,6 +7123,20 @@ class StarRocksCompactionExpert {
           args.include_details !== false,
         );
       },
+      analyze_slow_compaction_tasks: async (args, context) => {
+        const connection = context.connection;
+
+        // 检查集群架构
+        await this.checkSharedDataArchitecture(connection);
+
+        return await this.analyzeSlowCompactionTasks(connection, {
+          database_name: args.database_name || null,
+          table_name: args.table_name || null,
+          min_duration_hours: args.min_duration_hours || 0.05,
+          include_task_details: args.include_task_details !== false,
+          check_system_metrics: args.check_system_metrics !== false,
+        });
+      },
     };
   }
 
@@ -3680,6 +7236,63 @@ class StarRocksCompactionExpert {
             include_details: {
               type: 'boolean',
               description: '是否包含详细分析数据',
+              default: true,
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: 'analyze_slow_compaction_tasks',
+        description: `🐌 深度分析 Compaction 慢任务问题
+
+**功能**: 专门诊断运行缓慢的 Compaction 任务，提供根因分析和优化建议。
+
+**分析维度**:
+- ✅ 识别长时间运行的任务（默认 >= 3 分钟）
+- ✅ 检测停滞任务（进度 < 50% 且重试 > 3 次）
+- ✅ 分析任务进度推进速率
+- ✅ 检查节点负载分布
+- ✅ 评估线程配置是否合理
+- ✅ 关联系统资源和配置因素
+
+**输出内容**:
+- **diagnosis**: 根因诊断报告（最重要！）
+  - issues: 检测到的具体问题（排队等待、缓存未开启、tablet数量过多等）
+  - recommendations: 针对每个问题的可操作建议和示例 SQL 命令
+  - 问题严重程度分级（HIGH/MEDIUM/LOW）
+- summary: 慢任务统计摘要
+- slow_jobs: 慢任务详情列表（包含 Profile 性能分析）
+
+**适用场景**:
+- Compaction 任务长时间不完成
+- 任务进度停滞不前
+- 系统整体 Compaction 性能下降
+- 定期巡检和性能优化`,
+        inputSchema: {
+          type: 'object',
+          properties: {
+            database_name: {
+              type: 'string',
+              description: '可选：目标数据库名称，用于过滤特定数据库的慢任务',
+            },
+            table_name: {
+              type: 'string',
+              description: '可选：目标表名称，用于过滤特定表的慢任务',
+            },
+            min_duration_hours: {
+              type: 'number',
+              description: '慢任务时长阈值（小时），默认 0.05 小时（3 分钟）',
+              default: 0.05,
+            },
+            include_task_details: {
+              type: 'boolean',
+              description: '是否包含详细任务列表',
+              default: true,
+            },
+            check_system_metrics: {
+              type: 'boolean',
+              description: '是否检查系统指标（CS、线程配置等）',
               default: true,
             },
           },
