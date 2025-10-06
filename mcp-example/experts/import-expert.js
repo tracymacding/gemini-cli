@@ -1,13 +1,22 @@
 /**
+ * @license
+ * Copyright 2025 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
  * StarRocks Import 专家模块
  * 负责：数据导入分析、Stream Load/Broker Load/Routine Load 诊断、导入性能优化等
  */
+
+/* eslint-disable no-undef, @typescript-eslint/no-unused-vars */
 
 class StarRocksImportExpert {
   constructor() {
     this.name = 'import';
     this.version = '1.0.0';
-    this.description = 'StarRocks Import 系统专家 - 负责数据导入问题诊断、性能分析、任务监控等';
+    this.description =
+      'StarRocks Import 系统专家 - 负责数据导入问题诊断、性能分析、任务监控等';
 
     // Import专业知识规则库
     this.rules = {
@@ -16,7 +25,7 @@ class StarRocksImportExpert {
         max_file_size_mb: 10 * 1024, // 10GB
         recommended_batch_size_mb: 100, // 100MB
         timeout_seconds: 3600, // 1小时
-        max_filter_ratio: 0.1 // 10% 错误率阈值
+        max_filter_ratio: 0.1, // 10% 错误率阈值
       },
 
       // Broker Load 规则
@@ -24,7 +33,7 @@ class StarRocksImportExpert {
         max_parallelism: 5,
         load_timeout_seconds: 14400, // 4小时
         recommended_file_size_mb: 1024, // 1GB per file
-        max_error_number: 1000
+        max_error_number: 1000,
       },
 
       // Routine Load 规则
@@ -33,33 +42,42 @@ class StarRocksImportExpert {
         recommended_task_consume_second: 3,
         max_batch_interval_seconds: 20,
         max_batch_rows: 200000,
-        max_batch_size_mb: 100
+        max_batch_size_mb: 100,
       },
 
       // Insert 规则
       insert_load: {
         recommended_batch_size: 1000,
         max_batch_size: 10000,
-        timeout_seconds: 300
+        timeout_seconds: 300,
       },
 
       // 性能阈值
       performance: {
         slow_load_threshold_seconds: 300,
         low_throughput_mb_per_second: 10,
-        high_error_rate_percent: 5
-      }
+        high_error_rate_percent: 5,
+      },
     };
 
     // Import 相关术语
     this.terminology = {
       stream_load: 'Stream Load: 通过HTTP PUT同步导入数据，适合小批量实时导入',
-      broker_load: 'Broker Load: 通过Broker异步导入HDFS/S3数据，适合大批量历史数据',
+      broker_load:
+        'Broker Load: 通过Broker异步导入HDFS/S3数据，适合大批量历史数据',
       routine_load: 'Routine Load: 持续消费Kafka数据，适合实时流式导入',
       insert_load: 'Insert Load: 通过INSERT语句导入数据，适合少量数据插入',
       load_job: '导入作业，包含导入任务的所有信息和状态',
-      error_hub: '错误数据中心，存储导入过程中的错误数据'
+      error_hub: '错误数据中心，存储导入过程中的错误数据',
     };
+  }
+
+  /**
+   * Import 系统综合分析（MCP 工具接口）
+   */
+  async analyze(connection, options = {}) {
+    const includeDetails = options.includeDetails !== false;
+    return await this.diagnose(connection, includeDetails);
   }
 
   /**
@@ -76,7 +94,10 @@ class StarRocksImportExpert {
       const diagnosis = this.performImportDiagnosis(importData);
 
       // 3. 生成专业建议
-      const recommendations = this.generateImportRecommendations(diagnosis, importData);
+      const recommendations = this.generateImportRecommendations(
+        diagnosis,
+        importData,
+      );
 
       // 4. 计算Import健康分数
       const healthScore = this.calculateImportHealthScore(diagnosis);
@@ -93,7 +114,8 @@ class StarRocksImportExpert {
         diagnosis_results: diagnosis,
         professional_recommendations: recommendations,
         raw_data: includeDetails ? importData : null,
-        optimization_suggestions: this.generateOptimizationSuggestions(importData)
+        optimization_suggestions:
+          this.generateOptimizationSuggestions(importData),
       };
     } catch (error) {
       throw new Error(`Import专家诊断失败: ${error.message}`);
@@ -209,7 +231,8 @@ class StarRocksImportExpert {
 
     // 7. 分析Stream Load导入频率
     try {
-      data.import_frequency_analysis = await this.analyzeImportFrequency(connection);
+      data.import_frequency_analysis =
+        await this.analyzeImportFrequency(connection);
     } catch (error) {
       console.warn('Failed to analyze import frequency:', error.message);
       data.import_frequency_analysis = {};
@@ -225,7 +248,7 @@ class StarRocksImportExpert {
     const frequencyAnalysis = {
       tables: [],
       patterns: {},
-      insights: []
+      insights: [],
     };
 
     try {
@@ -248,7 +271,9 @@ class StarRocksImportExpert {
         historyQuery = 'loads_history';
         await this.processLoadHistoryData(historyLoads, frequencyAnalysis);
       } catch (historyError) {
-        console.warn('loads_history table not available, falling back to loads table');
+        console.warn(
+          'loads_history table not available, falling back to loads table',
+        );
 
         // 如果loads_history不可用，尝试使用loads表
         const [currentLoads] = await connection.query(`
@@ -274,7 +299,6 @@ class StarRocksImportExpert {
       this.generateFrequencyInsights(frequencyAnalysis);
 
       frequencyAnalysis.source_table = historyQuery;
-
     } catch (error) {
       console.warn('Error in import frequency analysis:', error.message);
     }
@@ -289,7 +313,7 @@ class StarRocksImportExpert {
     const tableMap = new Map();
 
     // 按表分组处理数据
-    loads.forEach(load => {
+    loads.forEach((load) => {
       const key = `${load.DATABASE_NAME}.${load.TABLE_NAME}`;
 
       if (!tableMap.has(key)) {
@@ -299,7 +323,7 @@ class StarRocksImportExpert {
           loads: [],
           totalLoads: 0,
           successLoads: 0,
-          failedLoads: 0
+          failedLoads: 0,
         });
       }
 
@@ -307,7 +331,7 @@ class StarRocksImportExpert {
       tableData.loads.push({
         create_time: load.CREATE_TIME,
         state: load.STATE,
-        timestamp: new Date(load.CREATE_TIME).getTime()
+        timestamp: new Date(load.CREATE_TIME).getTime(),
       });
 
       tableData.totalLoads++;
@@ -328,21 +352,33 @@ class StarRocksImportExpert {
       // 计算导入间隔
       const intervals = [];
       for (let i = 1; i < tableData.loads.length; i++) {
-        const interval = (tableData.loads[i].timestamp - tableData.loads[i-1].timestamp) / 1000; // 秒
+        const interval =
+          (tableData.loads[i].timestamp - tableData.loads[i - 1].timestamp) /
+          1000; // 秒
         intervals.push(interval);
       }
 
       // 计算频率统计
-      const avgInterval = intervals.reduce((sum, interval) => sum + interval, 0) / intervals.length;
+      const avgInterval =
+        intervals.reduce((sum, interval) => sum + interval, 0) /
+        intervals.length;
       const minInterval = Math.min(...intervals);
       const maxInterval = Math.max(...intervals);
 
       // 计算标准差
-      const variance = intervals.reduce((sum, interval) => sum + Math.pow(interval - avgInterval, 2), 0) / intervals.length;
+      const variance =
+        intervals.reduce(
+          (sum, interval) => sum + Math.pow(interval - avgInterval, 2),
+          0,
+        ) / intervals.length;
       const stdDev = Math.sqrt(variance);
 
       // 确定频率模式
-      const frequencyPattern = this.determineFrequencyPattern(avgInterval, stdDev, intervals);
+      const frequencyPattern = this.determineFrequencyPattern(
+        avgInterval,
+        stdDev,
+        intervals,
+      );
 
       const tableFrequency = {
         database: tableData.database,
@@ -350,7 +386,10 @@ class StarRocksImportExpert {
         totalLoads: tableData.totalLoads,
         successLoads: tableData.successLoads,
         failedLoads: tableData.failedLoads,
-        successRate: (tableData.successLoads / tableData.totalLoads * 100).toFixed(1),
+        successRate: (
+          (tableData.successLoads / tableData.totalLoads) *
+          100
+        ).toFixed(1),
         avgIntervalSeconds: Math.round(avgInterval),
         avgIntervalMinutes: Math.round(avgInterval / 60),
         avgIntervalHours: (avgInterval / 3600).toFixed(1),
@@ -364,15 +403,21 @@ class StarRocksImportExpert {
         timeSpan: {
           start: tableData.loads[0].create_time,
           end: tableData.loads[tableData.loads.length - 1].create_time,
-          durationHours: ((tableData.loads[tableData.loads.length - 1].timestamp - tableData.loads[0].timestamp) / 3600000).toFixed(1)
-        }
+          durationHours: (
+            (tableData.loads[tableData.loads.length - 1].timestamp -
+              tableData.loads[0].timestamp) /
+            3600000
+          ).toFixed(1),
+        },
       };
 
       frequencyAnalysis.tables.push(tableFrequency);
     }
 
     // 按导入频率排序
-    frequencyAnalysis.tables.sort((a, b) => parseFloat(b.loadsPerHour) - parseFloat(a.loadsPerHour));
+    frequencyAnalysis.tables.sort(
+      (a, b) => parseFloat(b.loadsPerHour) - parseFloat(a.loadsPerHour),
+    );
   }
 
   /**
@@ -414,7 +459,7 @@ class StarRocksImportExpert {
     return {
       frequency: pattern,
       regularity: regularity,
-      cvPercent: cvPercent.toFixed(1)
+      cvPercent: cvPercent.toFixed(1),
     };
   }
 
@@ -433,7 +478,7 @@ class StarRocksImportExpert {
 
     return {
       score: Math.round(score),
-      level: level
+      level: level,
     };
   }
 
@@ -443,21 +488,21 @@ class StarRocksImportExpert {
   calculateFrequencyPatterns(frequencyAnalysis) {
     const patterns = {
       'high-frequency': { count: 0, tables: [] },
-      'frequent': { count: 0, tables: [] },
-      'moderate': { count: 0, tables: [] },
-      'hourly': { count: 0, tables: [] },
-      'daily': { count: 0, tables: [] },
-      'low-frequency': { count: 0, tables: [] }
+      frequent: { count: 0, tables: [] },
+      moderate: { count: 0, tables: [] },
+      hourly: { count: 0, tables: [] },
+      daily: { count: 0, tables: [] },
+      'low-frequency': { count: 0, tables: [] },
     };
 
     const regularityStats = {
       'very-regular': 0,
-      'regular': 0,
-      'irregular': 0,
-      'very-irregular': 0
+      regular: 0,
+      irregular: 0,
+      'very-irregular': 0,
     };
 
-    frequencyAnalysis.tables.forEach(table => {
+    frequencyAnalysis.tables.forEach((table) => {
       const pattern = table.frequencyPattern.frequency;
       const regularity = table.frequencyPattern.regularity;
 
@@ -474,7 +519,7 @@ class StarRocksImportExpert {
     frequencyAnalysis.patterns = {
       frequency_distribution: patterns,
       regularity_distribution: regularityStats,
-      total_tables: frequencyAnalysis.tables.length
+      total_tables: frequencyAnalysis.tables.length,
     };
   }
 
@@ -489,60 +534,67 @@ class StarRocksImportExpert {
       insights.push({
         type: 'no_data',
         message: '未发现足够的Stream Load历史数据进行频率分析',
-        recommendation: '建议增加数据导入活动或检查更长时间范围的数据'
+        recommendation: '建议增加数据导入活动或检查更长时间范围的数据',
       });
       frequencyAnalysis.insights = insights;
       return;
     }
 
     // 1. 高频导入表分析
-    const highFreqTables = tables.filter(t => t.frequencyPattern.frequency === 'high-frequency');
+    const highFreqTables = tables.filter(
+      (t) => t.frequencyPattern.frequency === 'high-frequency',
+    );
     if (highFreqTables.length > 0) {
       insights.push({
         type: 'high_frequency_import',
         message: `发现 ${highFreqTables.length} 个高频导入表（间隔<1分钟）`,
-        tables: highFreqTables.slice(0, 5).map(t => ({
+        tables: highFreqTables.slice(0, 5).map((t) => ({
           table: `${t.database}.${t.table}`,
           interval_seconds: t.avgIntervalSeconds,
-          loads_per_hour: t.loadsPerHour
+          loads_per_hour: t.loadsPerHour,
         })),
-        recommendation: '考虑合并小批次导入以提高效率，减少系统负载'
+        recommendation: '考虑合并小批次导入以提高效率，减少系统负载',
       });
     }
 
     // 2. 不规律导入模式分析
-    const irregularTables = tables.filter(t => t.regularity.score < 40);
+    const irregularTables = tables.filter((t) => t.regularity.score < 40);
     if (irregularTables.length > 0) {
       insights.push({
         type: 'irregular_import_pattern',
         message: `发现 ${irregularTables.length} 个导入模式不规律的表`,
-        tables: irregularTables.slice(0, 5).map(t => ({
+        tables: irregularTables.slice(0, 5).map((t) => ({
           table: `${t.database}.${t.table}`,
           regularity_score: t.regularity.score,
-          cv_percent: t.frequencyPattern.cvPercent
+          cv_percent: t.frequencyPattern.cvPercent,
         })),
-        recommendation: '建议优化导入调度，建立更规律的导入模式'
+        recommendation: '建议优化导入调度，建立更规律的导入模式',
       });
     }
 
     // 3. 导入成功率分析
-    const lowSuccessTables = tables.filter(t => parseFloat(t.successRate) < 95);
+    const lowSuccessTables = tables.filter(
+      (t) => parseFloat(t.successRate) < 95,
+    );
     if (lowSuccessTables.length > 0) {
       insights.push({
         type: 'low_success_rate',
         message: `发现 ${lowSuccessTables.length} 个表的导入成功率较低`,
-        tables: lowSuccessTables.slice(0, 5).map(t => ({
+        tables: lowSuccessTables.slice(0, 5).map((t) => ({
           table: `${t.database}.${t.table}`,
           success_rate: t.successRate + '%',
           total_loads: t.totalLoads,
-          failed_loads: t.failedLoads
+          failed_loads: t.failedLoads,
         })),
-        recommendation: '检查数据格式、网络连接和系统资源，提高导入成功率'
+        recommendation: '检查数据格式、网络连接和系统资源，提高导入成功率',
       });
     }
 
     // 4. 负载分布分析
-    const totalLoadsPerHour = tables.reduce((sum, t) => sum + parseFloat(t.loadsPerHour), 0);
+    const totalLoadsPerHour = tables.reduce(
+      (sum, t) => sum + parseFloat(t.loadsPerHour),
+      0,
+    );
     if (totalLoadsPerHour > 1000) {
       insights.push({
         type: 'high_system_load',
@@ -550,9 +602,9 @@ class StarRocksImportExpert {
         metrics: {
           total_loads_per_hour: Math.round(totalLoadsPerHour),
           active_tables: tables.length,
-          avg_loads_per_table: (totalLoadsPerHour / tables.length).toFixed(1)
+          avg_loads_per_table: (totalLoadsPerHour / tables.length).toFixed(1),
         },
-        recommendation: '监控系统资源使用，考虑优化导入调度或扩容'
+        recommendation: '监控系统资源使用，考虑优化导入调度或扩容',
       });
     }
 
@@ -562,13 +614,13 @@ class StarRocksImportExpert {
       insights.push({
         type: 'most_active_tables',
         message: '最活跃的导入表',
-        tables: topActiveTables.map(t => ({
+        tables: topActiveTables.map((t) => ({
           table: `${t.database}.${t.table}`,
           loads_per_hour: t.loadsPerHour,
           frequency_pattern: t.frequencyPattern.frequency,
-          regularity: t.regularity.level
+          regularity: t.regularity.level,
         })),
-        recommendation: '重点监控这些活跃表的性能和资源使用情况'
+        recommendation: '重点监控这些活跃表的性能和资源使用情况',
       });
     }
 
@@ -608,7 +660,7 @@ class StarRocksImportExpert {
       warnings: warnings,
       issues: issues,
       insights: insights,
-      summary: this.generateImportSummary(criticals, warnings, issues)
+      summary: this.generateImportSummary(criticals, warnings, issues),
     };
   }
 
@@ -618,30 +670,34 @@ class StarRocksImportExpert {
   diagnoseImportFrequency(data, warnings, insights) {
     const frequencyData = data.import_frequency_analysis;
 
-    if (!frequencyData || !frequencyData.tables || frequencyData.tables.length === 0) {
+    if (
+      !frequencyData ||
+      !frequencyData.tables ||
+      frequencyData.tables.length === 0
+    ) {
       insights.push({
         type: 'import_frequency_no_data',
         message: '导入频率分析：未发现足够的历史数据',
-        recommendation: '建议检查数据源或扩大分析时间范围'
+        recommendation: '建议检查数据源或扩大分析时间范围',
       });
       return;
     }
 
     // 1. 添加频率分析的洞察到总洞察中
     if (frequencyData.insights && frequencyData.insights.length > 0) {
-      frequencyData.insights.forEach(insight => {
+      frequencyData.insights.forEach((insight) => {
         insights.push({
           type: `frequency_${insight.type}`,
           message: `导入频率分析：${insight.message}`,
           details: insight.tables || insight.metrics,
-          recommendation: insight.recommendation
+          recommendation: insight.recommendation,
         });
       });
     }
 
     // 2. 检查高频导入警告
-    const highFreqTables = frequencyData.tables.filter(t =>
-      t.frequencyPattern.frequency === 'high-frequency'
+    const highFreqTables = frequencyData.tables.filter(
+      (t) => t.frequencyPattern.frequency === 'high-frequency',
     );
 
     if (highFreqTables.length > 3) {
@@ -649,19 +705,19 @@ class StarRocksImportExpert {
         type: 'excessive_high_frequency_imports',
         severity: 'WARNING',
         message: `发现过多高频导入表 (${highFreqTables.length} 个)，可能影响系统性能`,
-        affected_tables: highFreqTables.slice(0, 5).map(t => ({
+        affected_tables: highFreqTables.slice(0, 5).map((t) => ({
           table: `${t.database}.${t.table}`,
           loads_per_hour: t.loadsPerHour,
-          avg_interval_seconds: t.avgIntervalSeconds
+          avg_interval_seconds: t.avgIntervalSeconds,
         })),
         impact: '过多的高频导入可能导致系统负载过高和资源竞争',
-        urgency: 'WITHIN_DAYS'
+        urgency: 'WITHIN_DAYS',
       });
     }
 
     // 3. 检查导入模式不规律的警告
-    const irregularTables = frequencyData.tables.filter(t =>
-      t.regularity.score < 40
+    const irregularTables = frequencyData.tables.filter(
+      (t) => t.regularity.score < 40,
     );
 
     if (irregularTables.length > frequencyData.tables.length * 0.5) {
@@ -669,13 +725,13 @@ class StarRocksImportExpert {
         type: 'irregular_import_patterns',
         severity: 'WARNING',
         message: `超过半数表的导入模式不规律 (${irregularTables.length}/${frequencyData.tables.length})`,
-        irregular_tables: irregularTables.slice(0, 5).map(t => ({
+        irregular_tables: irregularTables.slice(0, 5).map((t) => ({
           table: `${t.database}.${t.table}`,
           regularity_score: t.regularity.score,
-          cv_percent: t.frequencyPattern.cvPercent
+          cv_percent: t.frequencyPattern.cvPercent,
         })),
         impact: '不规律的导入模式可能导致资源使用不均和性能波动',
-        urgency: 'WITHIN_WEEKS'
+        urgency: 'WITHIN_WEEKS',
       });
     }
 
@@ -689,9 +745,9 @@ class StarRocksImportExpert {
           total_tables_analyzed: patterns.total_tables,
           frequency_distribution: patterns.frequency_distribution,
           regularity_distribution: patterns.regularity_distribution,
-          data_source: frequencyData.source_table
+          data_source: frequencyData.source_table,
         },
-        recommendations: this.generateFrequencyRecommendations(frequencyData)
+        recommendations: this.generateFrequencyRecommendations(frequencyData),
       });
     }
   }
@@ -711,16 +767,25 @@ class StarRocksImportExpert {
     }
 
     // 不规律导入优化建议
-    if (patterns.regularity_distribution['irregular'] + patterns.regularity_distribution['very-irregular'] > patterns.total_tables * 0.3) {
+    if (
+      patterns.regularity_distribution['irregular'] +
+        patterns.regularity_distribution['very-irregular'] >
+      patterns.total_tables * 0.3
+    ) {
       recommendations.push('建立规律的导入调度机制，提高资源利用效率');
     }
 
     // 负载均衡建议
-    if (patterns.frequency_distribution['frequent'].count > patterns.total_tables * 0.5) {
+    if (
+      patterns.frequency_distribution['frequent'].count >
+      patterns.total_tables * 0.5
+    ) {
       recommendations.push('监控系统负载，考虑在低峰期调度部分导入任务');
     }
 
-    return recommendations.length > 0 ? recommendations : ['当前导入频率模式合理，保持现有策略'];
+    return recommendations.length > 0
+      ? recommendations
+      : ['当前导入频率模式合理，保持现有策略'];
   }
 
   /**
@@ -741,10 +806,10 @@ class StarRocksImportExpert {
           metrics: {
             total_jobs: stats.total_jobs,
             failed_jobs: stats.failed_jobs,
-            failure_rate: failureRate.toFixed(1)
+            failure_rate: failureRate.toFixed(1),
           },
           impact: '大量导入失败可能导致数据丢失和业务中断',
-          urgency: 'IMMEDIATE'
+          urgency: 'IMMEDIATE',
         });
       } else if (failureRate > 10) {
         warnings.push({
@@ -754,16 +819,18 @@ class StarRocksImportExpert {
           metrics: {
             total_jobs: stats.total_jobs,
             failed_jobs: stats.failed_jobs,
-            failure_rate: failureRate.toFixed(1)
+            failure_rate: failureRate.toFixed(1),
           },
           impact: '需要关注导入质量，建议检查数据格式和配置',
-          urgency: 'WITHIN_HOURS'
+          urgency: 'WITHIN_HOURS',
         });
       }
     }
 
     // 检查最近失败的作业
-    const recentFailures = recentLoads.filter(load => load.STATE === 'CANCELLED');
+    const recentFailures = recentLoads.filter(
+      (load) => load.STATE === 'CANCELLED',
+    );
     if (recentFailures.length > 5) {
       warnings.push({
         type: 'frequent_load_failures',
@@ -771,7 +838,7 @@ class StarRocksImportExpert {
         message: `最近24小时内有 ${recentFailures.length} 个导入作业失败`,
         affected_count: recentFailures.length,
         impact: '频繁的导入失败可能指示系统性问题',
-        urgency: 'WITHIN_HOURS'
+        urgency: 'WITHIN_HOURS',
       });
     }
   }
@@ -782,23 +849,26 @@ class StarRocksImportExpert {
   diagnoseLoadPerformance(data, warnings, insights) {
     const stats = data.stream_load_stats;
 
-    if (stats.avg_load_time_seconds > this.rules.performance.slow_load_threshold_seconds) {
+    if (
+      stats.avg_load_time_seconds >
+      this.rules.performance.slow_load_threshold_seconds
+    ) {
       warnings.push({
         type: 'slow_load_performance',
         severity: 'WARNING',
         message: `平均导入时间过长: ${stats.avg_load_time_seconds.toFixed(1)} 秒`,
         metrics: {
           avg_load_time: stats.avg_load_time_seconds.toFixed(1),
-          threshold: this.rules.performance.slow_load_threshold_seconds
+          threshold: this.rules.performance.slow_load_threshold_seconds,
         },
         impact: '导入性能低下可能影响数据实时性',
-        urgency: 'WITHIN_DAYS'
+        urgency: 'WITHIN_DAYS',
       });
     }
 
     // 分析表级别的导入模式
     const tableStats = data.table_load_stats || [];
-    const highVolumeTable = tableStats.find(table => table.load_count > 100);
+    const highVolumeTable = tableStats.find((table) => table.load_count > 100);
 
     if (highVolumeTable) {
       insights.push({
@@ -807,13 +877,16 @@ class StarRocksImportExpert {
         analysis: {
           table: `${highVolumeTable.database_name}.${highVolumeTable.table_name}`,
           load_count: highVolumeTable.load_count,
-          success_rate: ((highVolumeTable.success_count / highVolumeTable.load_count) * 100).toFixed(1)
+          success_rate: (
+            (highVolumeTable.success_count / highVolumeTable.load_count) *
+            100
+          ).toFixed(1),
         },
         recommendations: [
           '考虑优化导入频率，合并小批次导入',
           '监控表的导入性能和资源使用',
-          '评估是否需要调整表结构或分区策略'
-        ]
+          '评估是否需要调整表结构或分区策略',
+        ],
       });
     }
   }
@@ -824,7 +897,7 @@ class StarRocksImportExpert {
   diagnoseRoutineLoadHealth(data, warnings, criticals) {
     const routineLoads = data.routine_loads || [];
 
-    routineLoads.forEach(routine => {
+    routineLoads.forEach((routine) => {
       if (routine.STATE === 'PAUSED') {
         warnings.push({
           type: 'routine_load_paused',
@@ -834,7 +907,7 @@ class StarRocksImportExpert {
           table_name: routine.TABLE_NAME,
           pause_time: routine.PAUSE_TIME,
           impact: '流式导入中断可能导致数据延迟',
-          urgency: 'WITHIN_HOURS'
+          urgency: 'WITHIN_HOURS',
         });
       } else if (routine.STATE === 'CANCELLED') {
         criticals.push({
@@ -846,7 +919,7 @@ class StarRocksImportExpert {
           end_time: routine.END_TIME,
           error_msg: routine.OTHER_MSG,
           impact: '流式导入停止，可能导致数据丢失',
-          urgency: 'IMMEDIATE'
+          urgency: 'IMMEDIATE',
         });
       }
     });
@@ -857,7 +930,9 @@ class StarRocksImportExpert {
    */
   diagnoseLoadQueue(data, warnings, criticals) {
     const runningLoads = data.running_loads || [];
-    const pendingLoads = runningLoads.filter(load => load.STATE === 'PENDING');
+    const pendingLoads = runningLoads.filter(
+      (load) => load.STATE === 'PENDING',
+    );
 
     if (pendingLoads.length > 10) {
       criticals.push({
@@ -866,7 +941,7 @@ class StarRocksImportExpert {
         message: `导入队列积压严重，有 ${pendingLoads.length} 个作业等待执行`,
         pending_count: pendingLoads.length,
         impact: '导入队列积压可能导致数据延迟和超时',
-        urgency: 'IMMEDIATE'
+        urgency: 'IMMEDIATE',
       });
     } else if (pendingLoads.length > 5) {
       warnings.push({
@@ -875,13 +950,13 @@ class StarRocksImportExpert {
         message: `导入队列有 ${pendingLoads.length} 个作业等待执行`,
         pending_count: pendingLoads.length,
         impact: '需要监控导入队列，避免进一步积压',
-        urgency: 'WITHIN_HOURS'
+        urgency: 'WITHIN_HOURS',
       });
     }
 
     // 检查长时间运行的作业
     const now = new Date();
-    const longRunningLoads = runningLoads.filter(load => {
+    const longRunningLoads = runningLoads.filter((load) => {
       if (!load.CREATE_TIME) return false;
       const createTime = new Date(load.CREATE_TIME);
       const runningHours = (now - createTime) / (1000 * 60 * 60);
@@ -893,15 +968,18 @@ class StarRocksImportExpert {
         type: 'long_running_loads',
         severity: 'WARNING',
         message: `发现 ${longRunningLoads.length} 个长时间运行的导入作业`,
-        long_running_jobs: longRunningLoads.map(load => ({
+        long_running_jobs: longRunningLoads.map((load) => ({
           job_id: load.JOB_ID,
           label: load.LABEL,
           state: load.STATE,
           type: load.TYPE,
-          running_hours: Math.round((now - new Date(load.CREATE_TIME)) / (1000 * 60 * 60) * 10) / 10
+          running_hours:
+            Math.round(
+              ((now - new Date(load.CREATE_TIME)) / (1000 * 60 * 60)) * 10,
+            ) / 10,
         })),
         impact: '长时间运行的作业可能阻塞导入队列',
-        urgency: 'WITHIN_HOURS'
+        urgency: 'WITHIN_HOURS',
       });
     }
   }
@@ -914,7 +992,7 @@ class StarRocksImportExpert {
 
     // 统计错误类型
     const errorPatterns = {};
-    failedLoads.forEach(load => {
+    failedLoads.forEach((load) => {
       if (load.ERROR_MSG) {
         // 简化错误信息提取关键词
         let errorType = 'unknown';
@@ -924,7 +1002,10 @@ class StarRocksImportExpert {
           errorType = 'timeout';
         } else if (errorMsg.includes('format') || errorMsg.includes('parse')) {
           errorType = 'format_error';
-        } else if (errorMsg.includes('permission') || errorMsg.includes('access')) {
+        } else if (
+          errorMsg.includes('permission') ||
+          errorMsg.includes('access')
+        ) {
           errorType = 'permission_error';
         } else if (errorMsg.includes('memory') || errorMsg.includes('oom')) {
           errorType = 'memory_error';
@@ -946,7 +1027,7 @@ class StarRocksImportExpert {
           error_type: errorType,
           occurrence_count: count,
           impact: '重复错误可能指示配置或数据问题',
-          urgency: 'WITHIN_DAYS'
+          urgency: 'WITHIN_DAYS',
         });
       }
     });
@@ -958,7 +1039,7 @@ class StarRocksImportExpert {
   generateImportRecommendations(diagnosis, data) {
     const recommendations = [];
 
-    [...diagnosis.criticals, ...diagnosis.warnings].forEach(issue => {
+    [...diagnosis.criticals, ...diagnosis.warnings].forEach((issue) => {
       switch (issue.type) {
         case 'high_load_failure_rate':
         case 'moderate_load_failure_rate':
@@ -970,26 +1051,27 @@ class StarRocksImportExpert {
             professional_actions: [
               {
                 action: '分析失败原因',
-                command: 'SELECT ERROR_MSG, COUNT(*) FROM information_schema.loads WHERE STATE = "CANCELLED" AND CREATE_TIME >= DATE_SUB(NOW(), INTERVAL 24 HOUR) GROUP BY ERROR_MSG ORDER BY COUNT(*) DESC;',
-                purpose: '识别最常见的失败原因'
+                command:
+                  'SELECT ERROR_MSG, COUNT(*) FROM information_schema.loads WHERE STATE = "CANCELLED" AND CREATE_TIME >= DATE_SUB(NOW(), INTERVAL 24 HOUR) GROUP BY ERROR_MSG ORDER BY COUNT(*) DESC;',
+                purpose: '识别最常见的失败原因',
               },
               {
                 action: '检查数据格式',
                 steps: [
                   '验证数据文件格式是否符合表结构',
                   '检查字段分隔符和编码格式',
-                  '确认数据类型匹配'
-                ]
+                  '确认数据类型匹配',
+                ],
               },
               {
                 action: '优化导入参数',
                 recommendations: [
                   '调整max_filter_ratio参数',
                   '增加timeout时间',
-                  '优化批次大小'
-                ]
-              }
-            ]
+                  '优化批次大小',
+                ],
+              },
+            ],
           });
           break;
 
@@ -1004,23 +1086,19 @@ class StarRocksImportExpert {
               {
                 action: '检查作业状态',
                 command: `SHOW ROUTINE LOAD FOR ${issue.routine_name};`,
-                purpose: '获取详细的作业状态信息'
+                purpose: '获取详细的作业状态信息',
               },
               {
                 action: '恢复作业',
                 command: `RESUME ROUTINE LOAD FOR ${issue.routine_name};`,
                 risk_level: 'LOW',
-                note: '确保Kafka连接正常'
+                note: '确保Kafka连接正常',
               },
               {
                 action: '监控恢复效果',
-                monitoring_metrics: [
-                  '数据消费速度',
-                  '延迟时间',
-                  '错误率'
-                ]
-              }
-            ]
+                monitoring_metrics: ['数据消费速度', '延迟时间', '错误率'],
+              },
+            ],
           });
           break;
 
@@ -1033,21 +1111,17 @@ class StarRocksImportExpert {
             professional_actions: [
               {
                 action: '检查系统资源',
-                steps: [
-                  '监控CPU使用率',
-                  '检查内存使用情况',
-                  '评估磁盘IO负载'
-                ]
+                steps: ['监控CPU使用率', '检查内存使用情况', '评估磁盘IO负载'],
               },
               {
                 action: '调整并发配置',
                 recommendations: [
                   '增加BE节点导入并发度',
                   '优化FE资源分配',
-                  '调整导入队列大小'
-                ]
-              }
-            ]
+                  '调整导入队列大小',
+                ],
+              },
+            ],
           });
           break;
       }
@@ -1063,33 +1137,33 @@ class StarRocksImportExpert {
     const suggestions = {
       performance_optimization: [],
       reliability_optimization: [],
-      monitoring_enhancement: []
+      monitoring_enhancement: [],
     };
 
     // 性能优化建议
     suggestions.performance_optimization.push({
       area: 'batch_size_optimization',
       suggestion: '优化导入批次大小以提高吞吐量',
-      implementation: '根据数据量和系统资源调整Stream Load批次大小'
+      implementation: '根据数据量和系统资源调整Stream Load批次大小',
     });
 
     suggestions.performance_optimization.push({
       area: 'parallel_loading',
       suggestion: '利用并行导入提高数据导入速度',
-      implementation: '合理配置导入并发度，避免资源竞争'
+      implementation: '合理配置导入并发度，避免资源竞争',
     });
 
     // 可靠性优化建议
     suggestions.reliability_optimization.push({
       area: 'error_handling',
       suggestion: '建立完善的错误处理和重试机制',
-      implementation: '设置合理的错误容忍度和自动重试策略'
+      implementation: '设置合理的错误容忍度和自动重试策略',
     });
 
     suggestions.reliability_optimization.push({
       area: 'data_validation',
       suggestion: '加强数据质量验证',
-      implementation: '在导入前进行数据格式和完整性检查'
+      implementation: '在导入前进行数据格式和完整性检查',
     });
 
     // 监控增强建议
@@ -1100,8 +1174,8 @@ class StarRocksImportExpert {
         '导入成功率和失败率',
         '导入性能和吞吐量',
         '队列积压情况',
-        'Routine Load延迟时间'
-      ]
+        'Routine Load延迟时间',
+      ],
     });
 
     return suggestions;
@@ -1114,7 +1188,7 @@ class StarRocksImportExpert {
     let score = 100;
 
     // 基于不同问题类型的扣分策略
-    diagnosis.criticals.forEach(issue => {
+    diagnosis.criticals.forEach((issue) => {
       switch (issue.type) {
         case 'high_load_failure_rate':
           score -= 25;
@@ -1130,7 +1204,7 @@ class StarRocksImportExpert {
       }
     });
 
-    diagnosis.warnings.forEach(issue => {
+    diagnosis.warnings.forEach((issue) => {
       switch (issue.type) {
         case 'moderate_load_failure_rate':
           score -= 10;
@@ -1156,8 +1230,12 @@ class StarRocksImportExpert {
     return {
       score: score,
       level: level,
-      status: diagnosis.criticals.length > 0 ? 'CRITICAL' :
-              diagnosis.warnings.length > 0 ? 'WARNING' : 'HEALTHY'
+      status:
+        diagnosis.criticals.length > 0
+          ? 'CRITICAL'
+          : diagnosis.warnings.length > 0
+            ? 'WARNING'
+            : 'HEALTHY',
     };
   }
 
@@ -1166,8 +1244,12 @@ class StarRocksImportExpert {
    */
   generateImportSummary(criticals, warnings, issues) {
     if (criticals.length > 0) {
-      const failureIssues = criticals.filter(c => c.type.includes('failure')).length;
-      const queueIssues = criticals.filter(c => c.type.includes('queue')).length;
+      const failureIssues = criticals.filter((c) =>
+        c.type.includes('failure'),
+      ).length;
+      const queueIssues = criticals.filter((c) =>
+        c.type.includes('queue'),
+      ).length;
 
       if (failureIssues > 0) {
         return `Import系统存在 ${failureIssues} 个严重失败问题，影响数据导入成功率`;
@@ -1191,13 +1273,19 @@ class StarRocksImportExpert {
    * @param {boolean} includeDetails - 是否包含详细信息
    * @returns {Object} 详细的频率分析结果
    */
-  async analyzeTableImportFrequency(connection, dbName, tableName, includeDetails = true) {
+  async analyzeTableImportFrequency(
+    connection,
+    dbName,
+    tableName,
+    includeDetails = true,
+  ) {
     console.error(`🔍 开始分析表 ${dbName}.${tableName} 的导入频率...`);
     const startTime = Date.now();
 
     try {
       // 1. 基础统计查询
-      const [basicStats] = await connection.query(`
+      const [basicStats] = await connection.query(
+        `
         SELECT
           COUNT(*) as total_loads,
           MIN(CREATE_TIME) as first_load,
@@ -1206,18 +1294,55 @@ class StarRocksImportExpert {
           AVG(SCAN_BYTES) as avg_bytes_per_load,
           SUM(SCAN_BYTES) as total_bytes_processed,
           SUM(CASE WHEN STATE = 'FINISHED' THEN 1 ELSE 0 END) as success_count,
-          SUM(CASE WHEN STATE != 'FINISHED' THEN 1 ELSE 0 END) as failed_count
+          SUM(CASE WHEN STATE != 'FINISHED' THEN 1 ELSE 0 END) as failed_count,
+          GROUP_CONCAT(DISTINCT TYPE ORDER BY TYPE SEPARATOR ', ') as import_types,
+          AVG(TIMESTAMPDIFF(SECOND, LOAD_START_TIME, LOAD_COMMIT_TIME)) as avg_write_duration_seconds,
+          AVG(TIMESTAMPDIFF(SECOND, LOAD_COMMIT_TIME, LOAD_FINISH_TIME)) as avg_publish_duration_seconds,
+          AVG(TIMESTAMPDIFF(SECOND, LOAD_START_TIME, LOAD_FINISH_TIME)) as avg_total_duration_seconds,
+          AVG(
+            CASE
+              WHEN LOAD_START_TIME IS NOT NULL
+                AND LOAD_FINISH_TIME IS NOT NULL
+                AND TIMESTAMPDIFF(SECOND, LOAD_START_TIME, LOAD_FINISH_TIME) > 0
+              THEN SCAN_BYTES / (1024.0 * 1024.0) / TIMESTAMPDIFF(SECOND, LOAD_START_TIME, LOAD_FINISH_TIME)
+              ELSE NULL
+            END
+          ) as avg_throughput_mbps,
+          MIN(
+            CASE
+              WHEN LOAD_START_TIME IS NOT NULL
+                AND LOAD_FINISH_TIME IS NOT NULL
+                AND TIMESTAMPDIFF(SECOND, LOAD_START_TIME, LOAD_FINISH_TIME) > 0
+              THEN SCAN_BYTES / (1024.0 * 1024.0) / TIMESTAMPDIFF(SECOND, LOAD_START_TIME, LOAD_FINISH_TIME)
+              ELSE NULL
+            END
+          ) as min_throughput_mbps,
+          MAX(
+            CASE
+              WHEN LOAD_START_TIME IS NOT NULL
+                AND LOAD_FINISH_TIME IS NOT NULL
+                AND TIMESTAMPDIFF(SECOND, LOAD_START_TIME, LOAD_FINISH_TIME) > 0
+              THEN SCAN_BYTES / (1024.0 * 1024.0) / TIMESTAMPDIFF(SECOND, LOAD_START_TIME, LOAD_FINISH_TIME)
+              ELSE NULL
+            END
+          ) as max_throughput_mbps
         FROM _statistics_.loads_history
         WHERE DB_NAME = ? AND TABLE_NAME = ?
-      `, [dbName, tableName]);
+      `,
+        [dbName, tableName],
+      );
 
-      if (!basicStats || basicStats.length === 0 || basicStats[0].total_loads === 0) {
+      if (
+        !basicStats ||
+        basicStats.length === 0 ||
+        basicStats[0].total_loads === 0
+      ) {
         return {
           table: `${dbName}.${tableName}`,
           analysis_type: 'table_frequency_analysis',
           status: 'no_data',
           message: '未找到该表的导入记录',
-          analysis_duration_ms: Date.now() - startTime
+          analysis_duration_ms: Date.now() - startTime,
         };
       }
 
@@ -1225,25 +1350,52 @@ class StarRocksImportExpert {
       const timeSpanSeconds = Math.max(stats.time_span_seconds || 1, 1);
 
       // 2. 计算频率指标
-      const frequencyMetrics = this.calculateFrequencyMetrics(stats, timeSpanSeconds);
+      const frequencyMetrics = this.calculateFrequencyMetrics(
+        stats,
+        timeSpanSeconds,
+      );
 
       // 3. 获取时间分布数据
-      const timeDistribution = await this.getTimeDistribution(connection, dbName, tableName);
+      const timeDistribution = await this.getTimeDistribution(
+        connection,
+        dbName,
+        tableName,
+      );
 
-      // 4. 获取数据量统计
-      const sizeStats = await this.getSizeStatistics(connection, dbName, tableName);
+      // 4. 获取导入阶段耗时统计
+      const phaseStats = await this.getLoadPhaseStatistics(
+        connection,
+        dbName,
+        tableName,
+      );
 
-      // 5. 分析并发模式
-      const concurrencyAnalysis = this.analyzeConcurrencyPattern(timeDistribution, stats.total_loads);
+      // 5. 获取数据量统计
+      const sizeStats = await this.getSizeStatistics(
+        connection,
+        dbName,
+        tableName,
+      );
 
-      // 6. 识别导入模式
-      const patternAnalysis = this.identifyImportPattern(stats, frequencyMetrics, sizeStats, timeDistribution);
+      // 6. 分析并发模式
+      const concurrencyAnalysis = this.analyzeConcurrencyPattern(
+        timeDistribution,
+        stats.total_loads,
+      );
 
       // 7. 性能评估
-      const performanceAnalysis = this.evaluateImportPerformance(stats, frequencyMetrics, timeSpanSeconds);
+      const performanceAnalysis = this.evaluateImportPerformance(
+        stats,
+        frequencyMetrics,
+        timeSpanSeconds,
+      );
 
       // 8. 生成洞察和建议
-      const insights = this.generateTableFrequencyInsights(stats, frequencyMetrics, patternAnalysis, performanceAnalysis);
+      const insights = this.generateTableFrequencyInsights(
+        stats,
+        frequencyMetrics,
+        performanceAnalysis,
+        phaseStats,
+      );
 
       const result = {
         table: `${dbName}.${tableName}`,
@@ -1256,39 +1408,46 @@ class StarRocksImportExpert {
           total_loads: stats.total_loads,
           success_count: stats.success_count,
           failed_count: stats.failed_count,
-          success_rate: ((stats.success_count / stats.total_loads) * 100).toFixed(1),
+          success_rate: (
+            (stats.success_count / stats.total_loads) *
+            100
+          ).toFixed(1),
           first_load: stats.first_load,
           last_load: stats.last_load,
           time_span_seconds: timeSpanSeconds,
           total_data_processed: stats.total_bytes_processed,
-          avg_file_size: stats.avg_bytes_per_load
+          avg_file_size: stats.avg_bytes_per_load,
+          import_types: stats.import_types || 'N/A',
         },
 
         // 频率指标
         frequency_metrics: frequencyMetrics,
 
         // 时间分布
-        time_distribution: includeDetails ? timeDistribution : timeDistribution.slice(0, 10),
+        time_distribution: includeDetails
+          ? timeDistribution
+          : timeDistribution.slice(0, 10),
 
         // 数据量统计
         size_statistics: sizeStats,
 
+        // 导入阶段耗时统计
+        phase_statistics: phaseStats,
+
         // 并发分析
         concurrency_analysis: concurrencyAnalysis,
-
-        // 模式识别
-        pattern_analysis: patternAnalysis,
 
         // 性能评估
         performance_analysis: performanceAnalysis,
 
         // 洞察和建议
-        insights: insights
+        insights: insights,
       };
 
-      console.error(`✅ 表 ${dbName}.${tableName} 频率分析完成，耗时 ${result.analysis_duration_ms}ms`);
+      console.error(
+        `✅ 表 ${dbName}.${tableName} 频率分析完成，耗时 ${result.analysis_duration_ms}ms`,
+      );
       return result;
-
     } catch (error) {
       console.error(`❌ 表频率分析失败: ${error.message}`);
       return {
@@ -1296,7 +1455,7 @@ class StarRocksImportExpert {
         analysis_type: 'table_frequency_analysis',
         status: 'error',
         error: error.message,
-        analysis_duration_ms: Date.now() - startTime
+        analysis_duration_ms: Date.now() - startTime,
       };
     }
   }
@@ -1338,7 +1497,7 @@ class StarRocksImportExpert {
       avg_interval_seconds: parseFloat(avgInterval.toFixed(2)),
       frequency_level: frequencyLevel,
       frequency_category: frequencyCategory,
-      frequency_description: this.getFrequencyDescription(frequencyCategory)
+      frequency_description: this.getFrequencyDescription(frequencyCategory),
     };
   }
 
@@ -1347,7 +1506,8 @@ class StarRocksImportExpert {
    */
   async getTimeDistribution(connection, dbName, tableName) {
     try {
-      const [timeDistribution] = await connection.query(`
+      const [timeDistribution] = await connection.query(
+        `
         SELECT
           LOAD_FINISH_TIME,
           COUNT(*) as job_count,
@@ -1359,12 +1519,14 @@ class StarRocksImportExpert {
         WHERE DB_NAME = ? AND TABLE_NAME = ? AND LOAD_FINISH_TIME IS NOT NULL
         GROUP BY LOAD_FINISH_TIME
         ORDER BY LOAD_FINISH_TIME
-      `, [dbName, tableName, dbName, tableName]);
+      `,
+        [dbName, tableName, dbName, tableName],
+      );
 
-      return timeDistribution.map(item => ({
+      return timeDistribution.map((item) => ({
         finish_time: item.LOAD_FINISH_TIME,
         job_count: item.job_count,
-        percentage: parseFloat(item.percentage)
+        percentage: parseFloat(item.percentage),
       }));
     } catch (error) {
       console.warn(`获取时间分布失败: ${error.message}`);
@@ -1373,11 +1535,242 @@ class StarRocksImportExpert {
   }
 
   /**
+   * 获取导入阶段耗时统计
+   */
+  async getLoadPhaseStatistics(connection, dbName, tableName) {
+    try {
+      console.error(`🔍 正在获取表 ${dbName}.${tableName} 的阶段耗时统计...`);
+
+      // 首先检查有多少条记录有完整的时间字段
+      const [checkResult] = await connection.query(
+        `
+        SELECT
+          COUNT(*) as total_records,
+          SUM(CASE WHEN LOAD_START_TIME IS NOT NULL AND LOAD_COMMIT_TIME IS NOT NULL
+              AND LOAD_FINISH_TIME IS NOT NULL AND STATE = 'FINISHED' THEN 1 ELSE 0 END) as complete_records
+        FROM _statistics_.loads_history
+        WHERE DB_NAME = ? AND TABLE_NAME = ?
+      `,
+        [dbName, tableName],
+      );
+
+      console.error(
+        `📊 时间字段检查: 总记录=${checkResult[0].total_records}, 完整记录=${checkResult[0].complete_records}`,
+      );
+
+      if (checkResult[0].complete_records === 0) {
+        console.error(`⚠️  没有找到具有完整时间字段的记录，返回 null`);
+        return null;
+      }
+
+      const [phaseStats] = await connection.query(
+        `
+        SELECT
+          COUNT(*) as analyzed_loads,
+          AVG(TIMESTAMPDIFF(SECOND, LOAD_START_TIME, LOAD_COMMIT_TIME)) as avg_write_duration,
+          MIN(TIMESTAMPDIFF(SECOND, LOAD_START_TIME, LOAD_COMMIT_TIME)) as min_write_duration,
+          MAX(TIMESTAMPDIFF(SECOND, LOAD_START_TIME, LOAD_COMMIT_TIME)) as max_write_duration,
+          STDDEV(TIMESTAMPDIFF(SECOND, LOAD_START_TIME, LOAD_COMMIT_TIME)) as write_duration_stddev,
+          AVG(TIMESTAMPDIFF(SECOND, LOAD_COMMIT_TIME, LOAD_FINISH_TIME)) as avg_publish_duration,
+          MIN(TIMESTAMPDIFF(SECOND, LOAD_COMMIT_TIME, LOAD_FINISH_TIME)) as min_publish_duration,
+          MAX(TIMESTAMPDIFF(SECOND, LOAD_COMMIT_TIME, LOAD_FINISH_TIME)) as max_publish_duration,
+          STDDEV(TIMESTAMPDIFF(SECOND, LOAD_COMMIT_TIME, LOAD_FINISH_TIME)) as publish_duration_stddev,
+          AVG(TIMESTAMPDIFF(SECOND, LOAD_START_TIME, LOAD_FINISH_TIME)) as avg_total_duration,
+          MIN(TIMESTAMPDIFF(SECOND, LOAD_START_TIME, LOAD_FINISH_TIME)) as min_total_duration,
+          MAX(TIMESTAMPDIFF(SECOND, LOAD_START_TIME, LOAD_FINISH_TIME)) as max_total_duration,
+          STDDEV(TIMESTAMPDIFF(SECOND, LOAD_START_TIME, LOAD_FINISH_TIME)) as total_duration_stddev
+        FROM _statistics_.loads_history
+        WHERE DB_NAME = ?
+          AND TABLE_NAME = ?
+          AND LOAD_START_TIME IS NOT NULL
+          AND LOAD_COMMIT_TIME IS NOT NULL
+          AND LOAD_FINISH_TIME IS NOT NULL
+          AND STATE = 'FINISHED'
+      `,
+        [dbName, tableName],
+      );
+
+      if (
+        !phaseStats ||
+        phaseStats.length === 0 ||
+        phaseStats[0].analyzed_loads === 0
+      ) {
+        console.error(`⚠️  阶段统计查询无结果，返回 null`);
+        return null;
+      }
+
+      console.error(
+        `✅ 成功获取阶段统计，分析了 ${phaseStats[0].analyzed_loads} 条记录`,
+      );
+
+      const stats = phaseStats[0];
+
+      // 计算写入阶段占比
+      const writePercentage =
+        stats.avg_total_duration > 0
+          ? (stats.avg_write_duration / stats.avg_total_duration) * 100
+          : 0;
+
+      // 计算 publish 阶段占比
+      const publishPercentage =
+        stats.avg_total_duration > 0
+          ? (stats.avg_publish_duration / stats.avg_total_duration) * 100
+          : 0;
+
+      // 计算慢任务数量（单独查询，避免聚合函数嵌套）
+      let slowWriteCount = 0;
+      let slowPublishCount = 0;
+      try {
+        const writeThreshold = stats.avg_write_duration * 3;
+        const publishThreshold = stats.avg_publish_duration * 3;
+
+        const [slowTasks] = await connection.query(
+          `
+          SELECT
+            SUM(CASE WHEN TIMESTAMPDIFF(SECOND, LOAD_START_TIME, LOAD_COMMIT_TIME) > ? THEN 1 ELSE 0 END) as slow_write,
+            SUM(CASE WHEN TIMESTAMPDIFF(SECOND, LOAD_COMMIT_TIME, LOAD_FINISH_TIME) > ? THEN 1 ELSE 0 END) as slow_publish
+          FROM _statistics_.loads_history
+          WHERE DB_NAME = ?
+            AND TABLE_NAME = ?
+            AND LOAD_START_TIME IS NOT NULL
+            AND LOAD_COMMIT_TIME IS NOT NULL
+            AND LOAD_FINISH_TIME IS NOT NULL
+            AND STATE = 'FINISHED'
+        `,
+          [writeThreshold, publishThreshold, dbName, tableName],
+        );
+
+        if (slowTasks && slowTasks.length > 0) {
+          slowWriteCount = slowTasks[0].slow_write || 0;
+          slowPublishCount = slowTasks[0].slow_publish || 0;
+        }
+      } catch (err) {
+        console.warn(`计算慢任务数量失败: ${err.message}`);
+      }
+
+      return {
+        analyzed_loads: stats.analyzed_loads,
+
+        // 写入阶段统计
+        write_phase: {
+          avg_duration: parseFloat((stats.avg_write_duration || 0).toFixed(2)),
+          min_duration: stats.min_write_duration || 0,
+          max_duration: stats.max_write_duration || 0,
+          stddev: parseFloat((stats.write_duration_stddev || 0).toFixed(2)),
+          percentage_of_total: parseFloat(writePercentage.toFixed(1)),
+          slow_count: slowWriteCount,
+        },
+
+        // Publish 阶段统计
+        publish_phase: {
+          avg_duration: parseFloat(
+            (stats.avg_publish_duration || 0).toFixed(2),
+          ),
+          min_duration: stats.min_publish_duration || 0,
+          max_duration: stats.max_publish_duration || 0,
+          stddev: parseFloat((stats.publish_duration_stddev || 0).toFixed(2)),
+          percentage_of_total: parseFloat(publishPercentage.toFixed(1)),
+          slow_count: slowPublishCount,
+        },
+
+        // 总耗时统计
+        total_phase: {
+          avg_duration: parseFloat((stats.avg_total_duration || 0).toFixed(2)),
+          min_duration: stats.min_total_duration || 0,
+          max_duration: stats.max_total_duration || 0,
+          stddev: parseFloat((stats.total_duration_stddev || 0).toFixed(2)),
+        },
+
+        // 性能洞察
+        insights: this.generatePhaseInsights(
+          writePercentage,
+          publishPercentage,
+          slowWriteCount,
+          slowPublishCount,
+        ),
+      };
+    } catch (error) {
+      console.error(`❌ 获取阶段耗时统计失败: ${error.message}`);
+      console.error(error.stack);
+      return null;
+    }
+  }
+
+  /**
+   * 生成阶段耗时洞察
+   */
+  generatePhaseInsights(
+    writePercentage,
+    publishPercentage,
+    slowWriteCount,
+    slowPublishCount,
+  ) {
+    const insights = [];
+
+    // 写入阶段分析
+    if (writePercentage > 70) {
+      insights.push({
+        phase: 'write',
+        type: 'bottleneck',
+        message: `写入阶段耗时占比过高 (${writePercentage.toFixed(1)}%)`,
+        suggestion: '考虑优化数据写入性能，检查磁盘I/O和内存配置',
+      });
+    }
+
+    // Publish 阶段分析
+    if (publishPercentage > 50) {
+      insights.push({
+        phase: 'publish',
+        type: 'bottleneck',
+        message: `Publish 阶段耗时占比较高 (${publishPercentage.toFixed(1)}%)`,
+        suggestion: '可能存在版本发布或元数据更新瓶颈，检查事务提交性能',
+      });
+    }
+
+    // 慢任务分析
+    if (slowWriteCount > 0) {
+      insights.push({
+        phase: 'write',
+        type: 'slow_tasks',
+        message: `发现 ${slowWriteCount} 个慢写入任务`,
+        suggestion: '分析慢任务的数据特征和系统状态',
+      });
+    }
+
+    if (slowPublishCount > 0) {
+      insights.push({
+        phase: 'publish',
+        type: 'slow_tasks',
+        message: `发现 ${slowPublishCount} 个慢 publish 任务`,
+        suggestion: '检查元数据服务和版本管理性能',
+      });
+    }
+
+    // 性能均衡性分析
+    if (
+      writePercentage > 30 &&
+      writePercentage < 70 &&
+      publishPercentage > 20 &&
+      publishPercentage < 50
+    ) {
+      insights.push({
+        phase: 'overall',
+        type: 'balanced',
+        message: '导入各阶段耗时分布较为均衡',
+        suggestion: '当前性能配置合理，继续保持',
+      });
+    }
+
+    return insights;
+  }
+
+  /**
    * 获取数据量统计
    */
   async getSizeStatistics(connection, dbName, tableName) {
     try {
-      const [sizeStats] = await connection.query(`
+      const [sizeStats] = await connection.query(
+        `
         SELECT
           MIN(SCAN_BYTES) as min_size,
           MAX(SCAN_BYTES) as max_size,
@@ -1385,15 +1778,19 @@ class StarRocksImportExpert {
           STDDEV(SCAN_BYTES) as size_stddev
         FROM information_schema.loads
         WHERE DB_NAME = ? AND TABLE_NAME = ? AND SCAN_BYTES IS NOT NULL
-      `, [dbName, tableName]);
+      `,
+        [dbName, tableName],
+      );
 
       if (!sizeStats || sizeStats.length === 0) {
         return null;
       }
 
       const stats = sizeStats[0];
-      const variationCoefficient = stats.size_stddev && stats.avg_size ?
-        (stats.size_stddev / stats.avg_size * 100) : 0;
+      const variationCoefficient =
+        stats.size_stddev && stats.avg_size
+          ? (stats.size_stddev / stats.avg_size) * 100
+          : 0;
 
       return {
         min_size: stats.min_size,
@@ -1401,7 +1798,7 @@ class StarRocksImportExpert {
         avg_size: stats.avg_size,
         size_stddev: stats.size_stddev,
         variation_coefficient: parseFloat(variationCoefficient.toFixed(1)),
-        consistency_level: this.getSizeConsistencyLevel(variationCoefficient)
+        consistency_level: this.getSizeConsistencyLevel(variationCoefficient),
       };
     } catch (error) {
       console.warn(`获取大小统计失败: ${error.message}`);
@@ -1418,15 +1815,16 @@ class StarRocksImportExpert {
     }
 
     const peakTime = timeDistribution.reduce((max, current) =>
-      current.job_count > max.job_count ? current : max
+      current.job_count > max.job_count ? current : max,
     );
 
     const avgJobsPerSecond = totalLoads / timeDistribution.length;
 
     // 计算标准差
-    const variance = timeDistribution.reduce((sum, time) => {
-      return sum + Math.pow(time.job_count - avgJobsPerSecond, 2);
-    }, 0) / timeDistribution.length;
+    const variance =
+      timeDistribution.reduce((sum, time) => {
+        return sum + Math.pow(time.job_count - avgJobsPerSecond, 2);
+      }, 0) / timeDistribution.length;
     const stdDev = Math.sqrt(variance);
 
     return {
@@ -1435,7 +1833,10 @@ class StarRocksImportExpert {
       time_span_seconds: timeDistribution.length,
       avg_jobs_per_second: parseFloat(avgJobsPerSecond.toFixed(1)),
       completion_std_dev: parseFloat(stdDev.toFixed(2)),
-      concurrency_level: this.getConcurrencyLevel(peakTime.job_count, avgJobsPerSecond)
+      concurrency_level: this.getConcurrencyLevel(
+        peakTime.job_count,
+        avgJobsPerSecond,
+      ),
     };
   }
 
@@ -1454,8 +1855,8 @@ class StarRocksImportExpert {
         characteristics: [
           `${stats.total_loads}个文件快速并行导入`,
           `每秒处理${frequencyMetrics.loads_per_second}个文件`,
-          '适用于大规模数据迁移或基准测试'
-        ]
+          '适用于大规模数据迁移或基准测试',
+        ],
       });
     }
 
@@ -1468,8 +1869,8 @@ class StarRocksImportExpert {
         characteristics: [
           `高频导入 (${frequencyMetrics.loads_per_minute}次/分钟)`,
           '适用于实时数据处理',
-          '需要关注系统资源消耗'
-        ]
+          '需要关注系统资源消耗',
+        ],
       });
     }
 
@@ -1482,13 +1883,16 @@ class StarRocksImportExpert {
         characteristics: [
           `文件大小变异系数${sizeStats.variation_coefficient}%`,
           '数据已被均匀分片',
-          '负载均衡良好'
-        ]
+          '负载均衡良好',
+        ],
       });
     }
 
     // 检查基准测试模式
-    if (stats.total_loads === 195 && stats.success_count === stats.total_loads) {
+    if (
+      stats.total_loads === 195 &&
+      stats.success_count === stats.total_loads
+    ) {
       patterns.push({
         type: 'benchmark_testing',
         confidence: 0.95,
@@ -1496,14 +1900,14 @@ class StarRocksImportExpert {
         characteristics: [
           '195个文件 (SSB 100GB标准分片)',
           '100%成功率',
-          '性能测试或基准评估场景'
-        ]
+          '性能测试或基准评估场景',
+        ],
       });
     }
 
     return {
       identified_patterns: patterns,
-      primary_pattern: patterns.length > 0 ? patterns[0] : null
+      primary_pattern: patterns.length > 0 ? patterns[0] : null,
     };
   }
 
@@ -1512,28 +1916,54 @@ class StarRocksImportExpert {
    */
   evaluateImportPerformance(stats, frequencyMetrics, timeSpanSeconds) {
     const totalDataGB = stats.total_bytes_processed / (1024 * 1024 * 1024);
-    const throughputMBps = (stats.total_bytes_processed / (1024 * 1024)) / timeSpanSeconds;
-    const fileProcessingRate = stats.total_loads / timeSpanSeconds;
 
-    let performanceLevel = 'poor';
-    if (throughputMBps > 100) performanceLevel = 'excellent';
-    else if (throughputMBps > 50) performanceLevel = 'good';
-    else if (throughputMBps > 20) performanceLevel = 'fair';
+    // 使用每个任务吞吐量的平均值（更准确）
+    // 确保转换为数字类型，避免 null、undefined 或 NaN
+    const avgThroughputMBps = Number(stats.avg_throughput_mbps) || 0;
+    const minThroughputMBps = Number(stats.min_throughput_mbps) || 0;
+    const maxThroughputMBps = Number(stats.max_throughput_mbps) || 0;
+
+    // 安全地格式化数字
+    const safeFormat = (num, decimals) => {
+      const n = Number(num);
+      return isNaN(n) ? 0 : parseFloat(n.toFixed(decimals));
+    };
 
     return {
-      total_data_gb: parseFloat(totalDataGB.toFixed(2)),
-      throughput_mbps: parseFloat(throughputMBps.toFixed(1)),
-      file_processing_rate: parseFloat(fileProcessingRate.toFixed(1)),
-      performance_level: performanceLevel,
-      success_rate: parseFloat(((stats.success_count / stats.total_loads) * 100).toFixed(1))
+      total_data_gb: safeFormat(totalDataGB, 2),
+      throughput_mbps: safeFormat(avgThroughputMBps, 1),
+      min_throughput_mbps: safeFormat(minThroughputMBps, 1),
+      max_throughput_mbps: safeFormat(maxThroughputMBps, 1),
+      success_rate: safeFormat(
+        (stats.success_count / stats.total_loads) * 100,
+        1,
+      ),
     };
   }
 
   /**
    * 生成表频率分析洞察
    */
-  generateTableFrequencyInsights(stats, frequencyMetrics, patternAnalysis, performanceAnalysis) {
+  generateTableFrequencyInsights(
+    stats,
+    frequencyMetrics,
+    performanceAnalysis,
+    phaseStats,
+  ) {
     const insights = [];
+
+    // 添加阶段耗时洞察
+    if (phaseStats && phaseStats.insights && phaseStats.insights.length > 0) {
+      phaseStats.insights.forEach((insight) => {
+        insights.push({
+          type: `phase_${insight.type}`,
+          priority: insight.type === 'bottleneck' ? 'high' : 'info',
+          message: insight.message,
+          implications: [insight.suggestion],
+          recommendations: [insight.suggestion],
+        });
+      });
+    }
 
     // 频率相关洞察
     if (frequencyMetrics.frequency_level === 'extreme') {
@@ -1544,32 +1974,13 @@ class StarRocksImportExpert {
         implications: [
           '可能是批量数据迁移或性能测试',
           '需要确保系统资源充足',
-          '关注I/O和网络性能'
+          '关注I/O和网络性能',
         ],
         recommendations: [
           '监控系统资源使用情况',
           '评估是否需要调整并发度',
-          '考虑优化导入批次大小'
-        ]
-      });
-    }
-
-    // 性能相关洞察
-    if (performanceAnalysis.performance_level === 'excellent') {
-      insights.push({
-        type: 'performance_excellent',
-        priority: 'info',
-        message: `导入性能优秀 (${performanceAnalysis.throughput_mbps} MB/s)`,
-        implications: [
-          '系统具备强大的数据处理能力',
-          '当前配置和优化效果良好',
-          '可以作为性能基准参考'
+          '考虑优化导入批次大小',
         ],
-        recommendations: [
-          '保持当前的导入策略',
-          '可以考虑处理更大规模的数据',
-          '建立性能监控基线'
-        ]
       });
     }
 
@@ -1582,13 +1993,13 @@ class StarRocksImportExpert {
         implications: [
           '导入流程非常稳定',
           '数据质量和格式良好',
-          '系统配置合理'
+          '系统配置合理',
         ],
         recommendations: [
           '继续保持当前的数据处理流程',
           '可以作为最佳实践案例',
-          '建立成功率监控告警'
-        ]
+          '建立成功率监控告警',
+        ],
       });
     } else if (performanceAnalysis.success_rate < 95) {
       insights.push({
@@ -1598,25 +2009,13 @@ class StarRocksImportExpert {
         implications: [
           '存在数据质量或系统问题',
           '可能影响数据完整性',
-          '需要分析失败原因'
+          '需要分析失败原因',
         ],
         recommendations: [
           '检查失败导入的错误日志',
           '改进数据验证和清洗流程',
-          '优化错误处理和重试机制'
-        ]
-      });
-    }
-
-    // 模式相关洞察
-    if (patternAnalysis.primary_pattern) {
-      const pattern = patternAnalysis.primary_pattern;
-      insights.push({
-        type: 'pattern_identified',
-        priority: 'info',
-        message: `识别出导入模式: ${pattern.description}`,
-        implications: pattern.characteristics,
-        recommendations: this.getPatternRecommendations(pattern.type)
+          '优化错误处理和重试机制',
+        ],
       });
     }
 
@@ -1628,12 +2027,12 @@ class StarRocksImportExpert {
    */
   getFrequencyDescription(category) {
     const descriptions = {
-      'extreme_frequency': '极高频 (每秒多次)',
-      'very_high_frequency': '超高频 (每分钟60+次)',
-      'high_frequency': '高频 (每分钟4+次)',
-      'frequent': '频繁 (每分钟1-4次)',
-      'moderate': '中等 (每小时1+次)',
-      'low_frequency': '低频 (每小时<1次)'
+      extreme_frequency: '极高频 (每秒多次)',
+      very_high_frequency: '超高频 (每分钟60+次)',
+      high_frequency: '高频 (每分钟4+次)',
+      frequent: '频繁 (每分钟1-4次)',
+      moderate: '中等 (每小时1+次)',
+      low_frequency: '低频 (每小时<1次)',
     };
     return descriptions[category] || '未知频率';
   }
@@ -1662,26 +2061,26 @@ class StarRocksImportExpert {
    */
   getPatternRecommendations(patternType) {
     const recommendations = {
-      'bulk_parallel_import': [
+      bulk_parallel_import: [
         '监控系统资源使用峰值',
         '考虑在低峰时段执行大批量导入',
-        '优化并行度避免资源争抢'
+        '优化并行度避免资源争抢',
       ],
-      'streaming_import': [
+      streaming_import: [
         '建立实时监控和告警',
         '优化批次大小平衡延迟和吞吐量',
-        '考虑使用Routine Load提高稳定性'
+        '考虑使用Routine Load提高稳定性',
       ],
-      'uniform_sharding': [
+      uniform_sharding: [
         '继续保持均匀分片策略',
         '可以考虑适当增加并行度',
-        '监控单个分片的处理时间'
+        '监控单个分片的处理时间',
       ],
-      'benchmark_testing': [
+      benchmark_testing: [
         '记录性能基准指标',
         '可以作为系统性能评估标准',
-        '定期重复测试验证系统稳定性'
-      ]
+        '定期重复测试验证系统稳定性',
+      ],
     };
     return recommendations[patternType] || ['需要进一步分析具体场景'];
   }
@@ -1705,6 +2104,7 @@ class StarRocksImportExpert {
     report += '📈 基础统计信息:\n';
     report += `   总导入作业: ${stats.total_loads.toLocaleString()}\n`;
     report += `   成功率: ${stats.success_rate}%\n`;
+    report += `   导入类型: ${stats.import_types}\n`;
     report += `   时间跨度: ${stats.time_span_seconds}秒\n`;
     report += `   数据处理量: ${this.formatBytes(stats.total_data_processed)}\n\n`;
 
@@ -1717,19 +2117,36 @@ class StarRocksImportExpert {
 
     // 性能评估
     report += '📊 性能评估:\n';
-    report += `   数据吞吐量: ${perf.throughput_mbps} MB/s\n`;
-    report += `   文件处理速度: ${perf.file_processing_rate} 文件/秒\n`;
-    report += `   性能等级: ${perf.performance_level}\n\n`;
+    report += `   平均吞吐量: ${perf.throughput_mbps} MB/s\n`;
+    report += `   吞吐量范围: ${perf.min_throughput_mbps} - ${perf.max_throughput_mbps} MB/s\n\n`;
 
-    // 模式识别
-    if (analysis.pattern_analysis.primary_pattern) {
-      const pattern = analysis.pattern_analysis.primary_pattern;
-      report += '🎯 模式识别:\n';
-      report += `   识别模式: ${pattern.description}\n`;
-      report += `   置信度: ${(pattern.confidence * 100).toFixed(0)}%\n`;
-      pattern.characteristics.forEach(char => {
-        report += `   特征: ${char}\n`;
-      });
+    // 导入阶段耗时统计
+    if (analysis.phase_statistics) {
+      const phase = analysis.phase_statistics;
+      report += '⏱️  导入阶段耗时分析:\n';
+      report += `   分析样本: ${phase.analyzed_loads} 个成功导入\n\n`;
+
+      report += `   📝 写入阶段:\n`;
+      report += `      平均耗时: ${phase.write_phase.avg_duration} 秒\n`;
+      report += `      耗时范围: ${phase.write_phase.min_duration} - ${phase.write_phase.max_duration} 秒\n`;
+      report += `      占总耗时: ${phase.write_phase.percentage_of_total}%\n`;
+      if (phase.write_phase.slow_count > 0) {
+        report += `      ⚠️  慢任务: ${phase.write_phase.slow_count} 个\n`;
+      }
+      report += '\n';
+
+      report += `   📤 Publish阶段:\n`;
+      report += `      平均耗时: ${phase.publish_phase.avg_duration} 秒\n`;
+      report += `      耗时范围: ${phase.publish_phase.min_duration} - ${phase.publish_phase.max_duration} 秒\n`;
+      report += `      占总耗时: ${phase.publish_phase.percentage_of_total}%\n`;
+      if (phase.publish_phase.slow_count > 0) {
+        report += `      ⚠️  慢任务: ${phase.publish_phase.slow_count} 个\n`;
+      }
+      report += '\n';
+
+      report += `   🔄 总耗时:\n`;
+      report += `      平均耗时: ${phase.total_phase.avg_duration} 秒\n`;
+      report += `      耗时范围: ${phase.total_phase.min_duration} - ${phase.total_phase.max_duration} 秒\n`;
       report += '\n';
     }
 
@@ -1737,8 +2154,12 @@ class StarRocksImportExpert {
     if (analysis.insights.length > 0) {
       report += '💡 关键洞察:\n';
       analysis.insights.slice(0, 3).forEach((insight, index) => {
-        const priority = insight.priority === 'high' ? '🔥' :
-                        insight.priority === 'medium' ? '⚠️' : 'ℹ️';
+        const priority =
+          insight.priority === 'high'
+            ? '🔥'
+            : insight.priority === 'medium'
+              ? '⚠️'
+              : 'ℹ️';
         report += `   ${index + 1}. ${priority} ${insight.message}\n`;
         if (insight.recommendations.length > 0) {
           report += `      建议: ${insight.recommendations[0]}\n`;
@@ -1766,13 +2187,13 @@ class StarRocksImportExpert {
    */
   getToolHandlers() {
     return {
-      'analyze_table_import_frequency': async (args, context) => {
+      analyze_table_import_frequency: async (args, context) => {
         const connection = context.connection;
         const result = await this.analyzeTableImportFrequency(
           connection,
           args.database_name,
           args.table_name,
-          args.include_details !== false
+          args.include_details !== false,
         );
 
         let report;
@@ -1785,19 +2206,20 @@ class StarRocksImportExpert {
           report += `耗时: ${result.analysis_duration_ms}ms`;
         }
 
+        // 添加输出指示，引导 LLM 原样输出
+        const outputInstruction =
+          '📋 以下是预格式化的分析报告，请**原样输出**完整内容，不要总结或重新格式化：\n\n```\n';
+        const reportEnd = '\n```\n';
+
         return {
           content: [
             {
               type: 'text',
-              text: report
+              text: outputInstruction + report + reportEnd,
             },
-            {
-              type: 'text',
-              text: JSON.stringify(result, null, 2)
-            }
-          ]
+          ],
         };
-      }
+      },
     };
   }
 
@@ -1808,27 +2230,28 @@ class StarRocksImportExpert {
     return [
       {
         name: 'analyze_table_import_frequency',
-        description: '🔍 表级导入频率分析 - 深度分析指定表的导入模式、性能和频率特征',
+        description:
+          '🔍 表级导入频率分析 - 深度分析指定表的导入模式、性能和频率特征。\n\n⚠️ 输出指示：此工具返回预格式化的详细报告，请**完整、原样**输出所有内容，包括所有统计数据、分析结果和建议。不要总结、省略或重新格式化报告内容。',
         inputSchema: {
           type: 'object',
           properties: {
             database_name: {
               type: 'string',
-              description: '数据库名称'
+              description: '数据库名称',
             },
             table_name: {
               type: 'string',
-              description: '表名称'
+              description: '表名称',
             },
             include_details: {
               type: 'boolean',
               description: '是否包含详细分析数据',
-              default: true
-            }
+              default: true,
+            },
           },
-          required: ['database_name', 'table_name']
-        }
-      }
+          required: ['database_name', 'table_name'],
+        },
+      },
     ];
   }
 }
