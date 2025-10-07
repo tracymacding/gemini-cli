@@ -5,18 +5,18 @@
  */
 
 /**
- * StarRocks Import 专家模块
- * 负责：数据导入分析、Stream Load/Broker Load/Routine Load 诊断、导入性能优化等
+ * StarRocks Ingestion 专家模块
+ * 负责：数据摄入分析、Stream Load/Broker Load/Routine Load 诊断、导入性能优化等
  */
 
 /* eslint-disable no-undef, @typescript-eslint/no-unused-vars */
 
-class StarRocksImportExpert {
+class StarRocksIngestionExpert {
   constructor() {
-    this.name = 'import';
+    this.name = 'ingestion';
     this.version = '1.0.0';
     this.description =
-      'StarRocks Import 系统专家 - 负责数据导入问题诊断、性能分析、任务监控等';
+      'StarRocks Ingestion 系统专家 - 负责数据摄入问题诊断、性能分析、任务监控等';
 
     // Import专业知识规则库
     this.rules = {
@@ -2182,6 +2182,1576 @@ class StarRocksImportExpert {
   }
 
   /**
+   * 标准化 SHOW ROUTINE LOAD 返回的字段名
+   * 将 SHOW 命令返回的字段名（如 Name, DbName）转换为统一格式（NAME, DB_NAME）
+   */
+  normalizeRoutineLoadFields(job) {
+    return {
+      NAME: job.Name || job.NAME,
+      CREATE_TIME: job.CreateTime || job.CREATE_TIME,
+      PAUSE_TIME: job.PauseTime || job.PAUSE_TIME,
+      END_TIME: job.EndTime || job.END_TIME,
+      DB_NAME: job.DbName || job.DB_NAME,
+      TABLE_NAME: job.TableName || job.TABLE_NAME,
+      STATE: job.State || job.STATE,
+      DATA_SOURCE_NAME: job.DataSourceType || job.DATA_SOURCE_NAME,
+      CURRENT_TASK_NUM: job.CurrentTaskNum || job.CURRENT_TASK_NUM || 0,
+      JOB_PROPERTIES: job.JobProperties || job.JOB_PROPERTIES,
+      DATA_SOURCE_PROPERTIES:
+        job.DataSourceProperties || job.DATA_SOURCE_PROPERTIES,
+      CUSTOM_PROPERTIES: job.CustomProperties || job.CUSTOM_PROPERTIES,
+      STATISTIC: job.Statistic || job.STATISTIC,
+      PROGRESS: job.Progress || job.PROGRESS,
+      TRACKING_SQL: job.TrackingSQL || job.TRACKING_SQL,
+      OTHER_MSG: job.OtherMsg || job.OTHER_MSG,
+      REASON_OF_STATE_CHANGED:
+        job.ReasonOfStateChanged || job.REASON_OF_STATE_CHANGED,
+    };
+  }
+
+  /**
+   * 检查 Routine Load Job 配置参数
+   * @param {Object} connection - 数据库连接
+   * @param {string} jobName - Routine Load 作业名称（可选）
+   * @param {string} dbName - 数据库名称（可选）
+   * @returns {Object} 参数检测结果
+   */
+  async checkRoutineLoadJobConfig(connection, jobName = null, dbName = null) {
+    console.error(`🔍 开始检查 Routine Load 作业配置...`);
+    const startTime = Date.now();
+
+    try {
+      // 1. 获取 Routine Load 作业列表（使用 SHOW ROUTINE LOAD 命令）
+      let routineLoadJobs = [];
+
+      if (dbName) {
+        // 指定了数据库，直接查询该数据库
+        const showCommand = jobName
+          ? `SHOW ROUTINE LOAD FOR ${jobName} FROM \`${dbName}\``
+          : `SHOW ROUTINE LOAD FROM \`${dbName}\``;
+
+        try {
+          const [jobs] = await connection.query(showCommand);
+          if (jobs && jobs.length > 0) {
+            // 标准化字段名
+            routineLoadJobs = jobs.map((job) =>
+              this.normalizeRoutineLoadFields(job),
+            );
+          }
+        } catch (error) {
+          console.error(
+            `查询数据库 ${dbName} 的 Routine Load 失败: ${error.message}`,
+          );
+          throw error;
+        }
+      } else {
+        // 未指定数据库，需要遍历所有数据库
+        const [databases] = await connection.query('SHOW DATABASES');
+
+        for (const db of databases) {
+          const currentDb = db.Database;
+
+          // 跳过系统数据库
+          if (
+            ['information_schema', '_statistics_', 'sys'].includes(currentDb)
+          ) {
+            continue;
+          }
+
+          try {
+            const showCommand = jobName
+              ? `SHOW ROUTINE LOAD FOR ${jobName} FROM \`${currentDb}\``
+              : `SHOW ROUTINE LOAD FROM \`${currentDb}\``;
+
+            const [jobs] = await connection.query(showCommand);
+            if (jobs && jobs.length > 0) {
+              // 标准化字段名
+              const normalizedJobs = jobs.map((job) =>
+                this.normalizeRoutineLoadFields(job),
+              );
+              routineLoadJobs.push(...normalizedJobs);
+            }
+          } catch (error) {
+            // 某些数据库可能没有 Routine Load 权限或为空，忽略错误
+            console.warn(
+              `查询数据库 ${currentDb} 的 Routine Load 失败: ${error.message}`,
+            );
+          }
+        }
+      }
+
+      if (!routineLoadJobs || routineLoadJobs.length === 0) {
+        return {
+          status: 'no_jobs',
+          message: jobName
+            ? `未找到名为 "${jobName}" 的 Routine Load 作业`
+            : dbName
+              ? `数据库 "${dbName}" 中未找到任何 Routine Load 作业`
+              : '未找到任何 Routine Load 作业',
+          analysis_duration_ms: Date.now() - startTime,
+        };
+      }
+
+      // 2. 分析每个作业的配置
+      const jobAnalysis = [];
+
+      for (const job of routineLoadJobs) {
+        const analysis = await this.analyzeRoutineLoadJobConfig(job);
+        jobAnalysis.push(analysis);
+      }
+
+      // 3. 生成综合评估
+      const overallAssessment =
+        this.generateRoutineLoadOverallAssessment(jobAnalysis);
+
+      console.error(
+        `✅ Routine Load 配置检查完成，耗时 ${Date.now() - startTime}ms`,
+      );
+
+      return {
+        status: 'completed',
+        analysis_type: 'routine_load_config_check',
+        analysis_duration_ms: Date.now() - startTime,
+        total_jobs: routineLoadJobs.length,
+        job_analysis: jobAnalysis,
+        overall_assessment: overallAssessment,
+      };
+    } catch (error) {
+      console.error(`❌ Routine Load 配置检查失败: ${error.message}`);
+      return {
+        status: 'error',
+        error: error.message,
+        analysis_duration_ms: Date.now() - startTime,
+      };
+    }
+  }
+
+  /**
+   * 分析单个 Routine Load 作业配置
+   */
+  async analyzeRoutineLoadJobConfig(job) {
+    const issues = [];
+    const warnings = [];
+    const recommendations = [];
+    let configScore = 100;
+
+    // 解析配置参数
+    const jobProperties = this.parseJobProperties(job.JOB_PROPERTIES);
+    const dataSourceProperties = this.parseJobProperties(
+      job.DATA_SOURCE_PROPERTIES,
+    );
+    const customProperties = this.parseJobProperties(job.CUSTOM_PROPERTIES);
+    const statistics = this.parseJobProperties(job.STATISTIC);
+
+    // 1. 检查任务并发数
+    const currentTaskNum = job.CURRENT_TASK_NUM || 0;
+    const desiredConcurrentNum =
+      parseInt(jobProperties.desired_concurrent_number) || 1;
+
+    if (currentTaskNum === 0 && job.STATE === 'RUNNING') {
+      issues.push({
+        type: 'no_running_tasks',
+        severity: 'CRITICAL',
+        message: '作业状态为 RUNNING 但没有运行中的任务',
+        impact: '数据无法被消费，可能导致数据延迟',
+      });
+      configScore -= 30;
+    }
+
+    if (desiredConcurrentNum > 5) {
+      warnings.push({
+        type: 'high_concurrent_number',
+        severity: 'WARNING',
+        message: `并发数设置过高: ${desiredConcurrentNum}`,
+        current_value: desiredConcurrentNum,
+        recommended_value: '1-5',
+        impact: '过高的并发可能导致资源竞争和任务不稳定',
+      });
+      configScore -= 10;
+    }
+
+    // 2. 检查 max_batch_interval
+    const maxBatchInterval =
+      parseInt(jobProperties.max_batch_interval) ||
+      this.rules.routine_load.max_batch_interval_seconds;
+
+    if (maxBatchInterval > this.rules.routine_load.max_batch_interval_seconds) {
+      warnings.push({
+        type: 'high_batch_interval',
+        severity: 'WARNING',
+        message: `批次间隔过长: ${maxBatchInterval}秒`,
+        current_value: maxBatchInterval,
+        recommended_value: this.rules.routine_load.max_batch_interval_seconds,
+        impact: '批次间隔过长可能导致数据延迟增加',
+      });
+      configScore -= 5;
+    }
+
+    // 3. 检查 max_batch_rows
+    const maxBatchRows =
+      parseInt(jobProperties.max_batch_rows) ||
+      this.rules.routine_load.max_batch_rows;
+
+    if (maxBatchRows > this.rules.routine_load.max_batch_rows) {
+      warnings.push({
+        type: 'high_batch_rows',
+        severity: 'WARNING',
+        message: `单批次行数过多: ${maxBatchRows.toLocaleString()}`,
+        current_value: maxBatchRows,
+        recommended_value: this.rules.routine_load.max_batch_rows,
+        impact: '批次过大可能导致内存压力和任务超时',
+      });
+      configScore -= 5;
+    }
+
+    // 4. 检查 max_error_number
+    const maxErrorNumber = parseInt(jobProperties.max_error_number) || 0;
+
+    if (maxErrorNumber > 10000) {
+      warnings.push({
+        type: 'high_error_tolerance',
+        severity: 'WARNING',
+        message: `错误容忍度过高: ${maxErrorNumber.toLocaleString()}`,
+        current_value: maxErrorNumber,
+        recommended_value: '1000-5000',
+        impact: '过高的错误容忍可能掩盖数据质量问题',
+      });
+      configScore -= 5;
+    }
+
+    // 5. 检查 Kafka 相关配置
+    if (dataSourceProperties.kafka_topic) {
+      // 检查 kafka_partitions
+      const kafkaPartitions = dataSourceProperties.kafka_partitions;
+      if (kafkaPartitions && desiredConcurrentNum > 1) {
+        const partitionCount = kafkaPartitions.split(',').length;
+        if (desiredConcurrentNum > partitionCount) {
+          warnings.push({
+            type: 'concurrent_exceeds_partitions',
+            severity: 'WARNING',
+            message: `并发数 (${desiredConcurrentNum}) 超过 Kafka 分区数 (${partitionCount})`,
+            current_concurrent: desiredConcurrentNum,
+            partition_count: partitionCount,
+            impact: '部分任务将处于空闲状态，浪费资源',
+          });
+          configScore -= 10;
+        }
+      }
+
+      // 检查 kafka_offsets
+      if (!dataSourceProperties.kafka_offsets) {
+        recommendations.push({
+          type: 'kafka_offsets_not_set',
+          priority: 'LOW',
+          message: '未显式设置 kafka_offsets',
+          suggestion: '建议显式设置起始 offset 以避免数据丢失或重复消费',
+        });
+      }
+    }
+
+    // 6. 检查 format 和数据格式配置
+    const format = jobProperties.format?.toLowerCase() || 'csv';
+    const stripOuterArray = customProperties.strip_outer_array === 'true';
+    const jsonPaths = customProperties.jsonpaths;
+
+    if (format === 'json' && !jsonPaths && !stripOuterArray) {
+      recommendations.push({
+        type: 'json_format_optimization',
+        priority: 'MEDIUM',
+        message: 'JSON 格式未配置 jsonpaths 或 strip_outer_array',
+        suggestion:
+          '建议配置 jsonpaths 或 strip_outer_array 以优化 JSON 解析性能',
+      });
+    }
+
+    // 7. 检查作业状态和统计信息
+    if (job.STATE === 'PAUSED') {
+      issues.push({
+        type: 'job_paused',
+        severity: 'WARNING',
+        message: '作业处于暂停状态',
+        pause_time: job.PAUSE_TIME,
+        reason: job.REASON_OF_STATE_CHANGED,
+        impact: '数据消费中断，可能导致数据积压',
+      });
+      configScore -= 15;
+    }
+
+    if (job.STATE === 'CANCELLED') {
+      issues.push({
+        type: 'job_cancelled',
+        severity: 'CRITICAL',
+        message: '作业已被取消',
+        end_time: job.END_TIME,
+        reason: job.REASON_OF_STATE_CHANGED || job.OTHER_MSG,
+        impact: '数据消费完全停止',
+      });
+      configScore -= 40;
+    }
+
+    // 8. 分析统计信息
+    let performanceIssues = null;
+    if (statistics && statistics.receivedBytes) {
+      performanceIssues = this.analyzeRoutineLoadPerformance(statistics);
+      if (performanceIssues.warnings.length > 0) {
+        warnings.push(...performanceIssues.warnings);
+        configScore -= performanceIssues.score_penalty;
+      }
+    }
+
+    // 9. 生成优化建议
+    const optimizationRecommendations = this.generateRoutineLoadOptimizations(
+      jobProperties,
+      dataSourceProperties,
+      statistics,
+      job.STATE,
+    );
+
+    recommendations.push(...optimizationRecommendations);
+
+    return {
+      job_name: job.NAME,
+      database: job.DB_NAME,
+      table: job.TABLE_NAME,
+      state: job.STATE,
+      create_time: job.CREATE_TIME,
+      data_source: job.DATA_SOURCE_NAME,
+      current_tasks: currentTaskNum,
+      config_score: Math.max(0, configScore),
+      config_health:
+        configScore >= 80
+          ? 'GOOD'
+          : configScore >= 60
+            ? 'FAIR'
+            : configScore >= 40
+              ? 'POOR'
+              : 'CRITICAL',
+      configuration: {
+        job_properties: jobProperties,
+        data_source_properties: dataSourceProperties,
+        custom_properties: customProperties,
+      },
+      statistics: statistics,
+      issues: issues,
+      warnings: warnings,
+      recommendations: recommendations,
+      performance_analysis: performanceIssues,
+    };
+  }
+
+  /**
+   * 解析 Routine Load 属性字符串
+   */
+  parseJobProperties(propertiesStr) {
+    if (!propertiesStr) return {};
+
+    try {
+      // properties 通常是 JSON 字符串
+      return JSON.parse(propertiesStr);
+    } catch (e) {
+      // 如果不是 JSON，尝试解析 key=value 格式
+      const properties = {};
+      const pairs = propertiesStr.split(/[,;\n]/);
+      pairs.forEach((pair) => {
+        const match = pair.match(/^\s*(\w+)\s*[:=]\s*(.+?)\s*$/);
+        if (match) {
+          properties[match[1]] = match[2].replace(/^["']|["']$/g, '');
+        }
+      });
+      return properties;
+    }
+  }
+
+  /**
+   * 分析 Routine Load 性能
+   */
+  analyzeRoutineLoadPerformance(statistics) {
+    const warnings = [];
+    let scorePenalty = 0;
+
+    // 解析统计数据
+    const receivedBytes = parseFloat(statistics.receivedBytes) || 0;
+    const loadedRows = parseFloat(statistics.loadedRows) || 0;
+    const errorRows = parseFloat(statistics.errorRows) || 0;
+    const totalRows = loadedRows + errorRows;
+    const taskConsumeSecond =
+      parseFloat(statistics.currentTaskConsumeSecond) || 0;
+
+    // 1. 检查错误率
+    if (totalRows > 0) {
+      const errorRate = (errorRows / totalRows) * 100;
+      if (errorRate > 5) {
+        warnings.push({
+          type: 'high_error_rate',
+          severity: 'WARNING',
+          message: `错误率较高: ${errorRate.toFixed(2)}%`,
+          error_rows: errorRows,
+          total_rows: totalRows,
+          impact: '数据质量问题或格式不匹配',
+        });
+        scorePenalty += 15;
+      }
+    }
+
+    // 2. 检查消费速度
+    if (
+      taskConsumeSecond >
+      this.rules.routine_load.recommended_task_consume_second * 2
+    ) {
+      warnings.push({
+        type: 'slow_consume_speed',
+        severity: 'WARNING',
+        message: `消费速度较慢: ${taskConsumeSecond.toFixed(1)}秒/批次`,
+        current_value: taskConsumeSecond,
+        recommended_value:
+          this.rules.routine_load.recommended_task_consume_second,
+        impact: '数据消费缓慢可能导致延迟累积',
+      });
+      scorePenalty += 10;
+    }
+
+    // 3. 检查吞吐量
+    if (receivedBytes > 0 && taskConsumeSecond > 0) {
+      const throughputMBps = receivedBytes / taskConsumeSecond / 1024 / 1024;
+      if (throughputMBps < 1) {
+        warnings.push({
+          type: 'low_throughput',
+          severity: 'INFO',
+          message: `吞吐量较低: ${throughputMBps.toFixed(2)} MB/s`,
+          suggestion: '考虑优化批次大小或增加并发数',
+        });
+        scorePenalty += 5;
+      }
+    }
+
+    return {
+      warnings: warnings,
+      score_penalty: scorePenalty,
+      metrics: {
+        received_bytes: receivedBytes,
+        loaded_rows: loadedRows,
+        error_rows: errorRows,
+        error_rate:
+          totalRows > 0 ? ((errorRows / totalRows) * 100).toFixed(2) : 0,
+        task_consume_second: taskConsumeSecond,
+        throughput_mbps:
+          receivedBytes > 0 && taskConsumeSecond > 0
+            ? (receivedBytes / taskConsumeSecond / 1024 / 1024).toFixed(2)
+            : 0,
+      },
+    };
+  }
+
+  /**
+   * 生成 Routine Load 优化建议
+   */
+  generateRoutineLoadOptimizations(
+    jobProperties,
+    dataSourceProperties,
+    statistics,
+    jobState,
+  ) {
+    const recommendations = [];
+
+    // 1. 并发优化
+    const desiredConcurrentNum =
+      parseInt(jobProperties.desired_concurrent_number) || 1;
+    if (desiredConcurrentNum === 1 && statistics?.receivedBytes > 100000000) {
+      recommendations.push({
+        type: 'increase_concurrency',
+        priority: 'MEDIUM',
+        message: '数据量较大，建议增加并发数',
+        current_value: desiredConcurrentNum,
+        suggested_value: '2-3',
+        command:
+          'ALTER ROUTINE LOAD FOR <job_name> PROPERTIES("desired_concurrent_number" = "2")',
+      });
+    }
+
+    // 2. 批次大小优化
+    const maxBatchRows = parseInt(jobProperties.max_batch_rows) || 200000;
+    const taskConsumeSecond =
+      parseFloat(statistics?.currentTaskConsumeSecond) || 0;
+
+    if (taskConsumeSecond > 5 && maxBatchRows > 100000) {
+      recommendations.push({
+        type: 'reduce_batch_size',
+        priority: 'HIGH',
+        message: '消费速度慢，建议减小批次大小',
+        current_value: maxBatchRows,
+        suggested_value: '50000-100000',
+        command:
+          'ALTER ROUTINE LOAD FOR <job_name> PROPERTIES("max_batch_rows" = "100000")',
+      });
+    }
+
+    // 3. 状态恢复建议
+    if (jobState === 'PAUSED') {
+      recommendations.push({
+        type: 'resume_job',
+        priority: 'HIGH',
+        message: '作业已暂停，建议检查原因后恢复',
+        command: 'RESUME ROUTINE LOAD FOR <job_name>',
+      });
+    }
+
+    // 4. Kafka 消费组优化
+    if (dataSourceProperties.kafka_topic && !dataSourceProperties.property) {
+      recommendations.push({
+        type: 'kafka_consumer_properties',
+        priority: 'LOW',
+        message: '建议配置 Kafka consumer 属性以优化消费行为',
+        example:
+          'property.group.id, property.client.id, property.max.poll.records',
+      });
+    }
+
+    return recommendations;
+  }
+
+  /**
+   * 生成综合评估
+   */
+  generateRoutineLoadOverallAssessment(jobAnalysis) {
+    const totalJobs = jobAnalysis.length;
+    const healthyJobs = jobAnalysis.filter(
+      (j) => j.config_health === 'GOOD',
+    ).length;
+    const criticalJobs = jobAnalysis.filter(
+      (j) => j.config_health === 'CRITICAL',
+    ).length;
+    const pausedJobs = jobAnalysis.filter((j) => j.state === 'PAUSED').length;
+    const cancelledJobs = jobAnalysis.filter(
+      (j) => j.state === 'CANCELLED',
+    ).length;
+
+    const avgConfigScore =
+      jobAnalysis.reduce((sum, j) => sum + j.config_score, 0) / totalJobs;
+
+    let overallHealth = 'GOOD';
+    if (criticalJobs > 0 || cancelledJobs > 0) {
+      overallHealth = 'CRITICAL';
+    } else if (pausedJobs > 0 || avgConfigScore < 70) {
+      overallHealth = 'WARNING';
+    }
+
+    return {
+      total_jobs: totalJobs,
+      healthy_jobs: healthyJobs,
+      critical_jobs: criticalJobs,
+      paused_jobs: pausedJobs,
+      cancelled_jobs: cancelledJobs,
+      average_config_score: Math.round(avgConfigScore),
+      overall_health: overallHealth,
+      summary:
+        overallHealth === 'CRITICAL'
+          ? `发现 ${criticalJobs + cancelledJobs} 个严重问题的作业，需要立即处理`
+          : overallHealth === 'WARNING'
+            ? `${pausedJobs} 个作业已暂停，建议检查配置`
+            : '所有 Routine Load 作业配置健康',
+    };
+  }
+
+  /**
+   * 格式化 Routine Load 配置检查报告
+   */
+  formatRoutineLoadConfigReport(result) {
+    if (result.status !== 'completed') {
+      return `❌ Routine Load 配置检查失败: ${result.error || result.message}`;
+    }
+
+    let report = '📊 Routine Load 作业配置检查报告\n';
+    report += '==========================================\n\n';
+
+    // 综合评估
+    const assessment = result.overall_assessment;
+    report += '📈 综合评估:\n';
+    report += `   总作业数: ${assessment.total_jobs}\n`;
+    report += `   健康作业: ${assessment.healthy_jobs}\n`;
+    report += `   平均配置分数: ${assessment.average_config_score}/100\n`;
+    report += `   整体健康度: ${assessment.overall_health}\n`;
+    if (assessment.paused_jobs > 0) {
+      report += `   ⚠️  暂停作业: ${assessment.paused_jobs}\n`;
+    }
+    if (assessment.cancelled_jobs > 0) {
+      report += `   ❌ 取消作业: ${assessment.cancelled_jobs}\n`;
+    }
+    report += `\n   ${assessment.summary}\n\n`;
+
+    // 详细作业分析
+    report += '📋 详细作业分析:\n';
+    report += '==========================================\n\n';
+
+    for (const job of result.job_analysis) {
+      const healthIcon =
+        job.config_health === 'GOOD'
+          ? '✅'
+          : job.config_health === 'FAIR'
+            ? '⚠️'
+            : '❌';
+
+      report += `${healthIcon} **${job.job_name}** (${job.database}.${job.table})\n`;
+      report += `   状态: ${job.state}\n`;
+      report += `   配置健康度: ${job.config_health} (${job.config_score}/100)\n`;
+      report += `   当前任务数: ${job.current_tasks}\n`;
+
+      // 关键配置
+      const config = job.configuration.job_properties;
+      report += `   关键配置:\n`;
+      if (config.desired_concurrent_number) {
+        report += `     - 并发数: ${config.desired_concurrent_number}\n`;
+      }
+      if (config.max_batch_interval) {
+        report += `     - 批次间隔: ${config.max_batch_interval}s\n`;
+      }
+      if (config.max_batch_rows) {
+        report += `     - 批次行数: ${parseInt(config.max_batch_rows).toLocaleString()}\n`;
+      }
+      if (config.max_error_number) {
+        report += `     - 最大错误数: ${parseInt(config.max_error_number).toLocaleString()}\n`;
+      }
+
+      // 性能指标
+      if (job.performance_analysis) {
+        const perf = job.performance_analysis.metrics;
+        report += `   性能指标:\n`;
+        report += `     - 已加载行数: ${parseInt(perf.loaded_rows).toLocaleString()}\n`;
+        report += `     - 错误率: ${perf.error_rate}%\n`;
+        report += `     - 消费速度: ${perf.task_consume_second}s/批次\n`;
+        if (perf.throughput_mbps > 0) {
+          report += `     - 吞吐量: ${perf.throughput_mbps} MB/s\n`;
+        }
+      }
+
+      // 问题和警告
+      if (job.issues.length > 0) {
+        report += `   ❌ 问题 (${job.issues.length}):\n`;
+        job.issues.slice(0, 3).forEach((issue) => {
+          report += `     - ${issue.message}\n`;
+        });
+      }
+
+      if (job.warnings.length > 0) {
+        report += `   ⚠️  警告 (${job.warnings.length}):\n`;
+        job.warnings.slice(0, 3).forEach((warning) => {
+          report += `     - ${warning.message}\n`;
+        });
+      }
+
+      // 优化建议
+      if (job.recommendations.length > 0) {
+        report += `   💡 优化建议:\n`;
+        job.recommendations.slice(0, 3).forEach((rec) => {
+          const priorityIcon =
+            rec.priority === 'HIGH'
+              ? '🔥'
+              : rec.priority === 'MEDIUM'
+                ? '⚠️'
+                : 'ℹ️';
+          report += `     ${priorityIcon} ${rec.message}\n`;
+          if (rec.command) {
+            report += `        命令: ${rec.command.replace('<job_name>', job.job_name)}\n`;
+          }
+        });
+      }
+
+      report += '\n';
+    }
+
+    return report;
+  }
+
+  /**
+   * 检查表的 Stream Load 任务
+   * @param {Object} connection - 数据库连接
+   * @param {string} dbName - 数据库名称
+   * @param {string} tableName - 表名称
+   * @param {number} days - 分析天数（默认7天）
+   * @returns {Object} Stream Load 任务检查结果
+   */
+  async checkStreamLoadTasks(connection, dbName, tableName, days = 7) {
+    console.error(
+      `🔍 开始检查表 ${dbName}.${tableName} 的 Stream Load 任务...`,
+    );
+    const startTime = Date.now();
+
+    try {
+      // 1. 查询 Stream Load 历史数据（字段名已与表结构对照确认）
+      const query = `
+        SELECT
+          label,
+          db_name,
+          table_name,
+          state,
+          create_time,
+          load_start_time,
+          load_finish_time,
+          load_commit_time,
+          scan_rows,
+          scan_bytes,
+          filtered_rows,
+          unselected_rows,
+          sink_rows,
+          error_msg,
+          tracking_sql,
+          type
+        FROM _statistics_.loads_history
+        WHERE db_name = ?
+          AND table_name = ?
+          AND type = 'STREAM_LOAD'
+          AND create_time >= DATE_SUB(NOW(), INTERVAL ? DAY)
+        ORDER BY create_time DESC
+      `;
+
+      const [loads] = await connection.query(query, [dbName, tableName, days]);
+
+      if (!loads || loads.length === 0) {
+        return {
+          status: 'no_data',
+          message: `表 ${dbName}.${tableName} 在最近 ${days} 天内没有 Stream Load 任务记录`,
+          analysis_duration_ms: Date.now() - startTime,
+        };
+      }
+
+      // 2. 基础统计
+      const statistics = this.calculateStreamLoadStatistics(loads);
+
+      // 3. 频率分析
+      const frequencyAnalysis = this.analyzeStreamLoadFrequency(loads);
+
+      // 4. 批次大小分析
+      const batchSizeAnalysis = this.analyzeStreamLoadBatchSize(loads);
+
+      // 5. 性能分析
+      const performanceAnalysis = this.analyzeStreamLoadPerformance(loads);
+
+      // 6. 失败分析
+      const failureAnalysis = this.analyzeStreamLoadFailures(loads);
+
+      // 7. 慢任务分析
+      const slowTaskAnalysis = this.analyzeSlowStreamLoadTasks(loads, 10);
+
+      // 8. 生成问题和建议
+      const issuesAndRecommendations =
+        this.generateStreamLoadIssuesAndRecommendations(
+          statistics,
+          frequencyAnalysis,
+          batchSizeAnalysis,
+          performanceAnalysis,
+          failureAnalysis,
+        );
+
+      // 9. 计算健康分数
+      const healthScore = this.calculateStreamLoadHealthScore(
+        statistics,
+        frequencyAnalysis,
+        performanceAnalysis,
+      );
+
+      console.error(
+        `✅ Stream Load 任务检查完成，耗时 ${Date.now() - startTime}ms`,
+      );
+
+      return {
+        status: 'completed',
+        analysis_type: 'stream_load_task_check',
+        database: dbName,
+        table: tableName,
+        analysis_period_days: days,
+        analysis_duration_ms: Date.now() - startTime,
+        health_score: healthScore,
+        statistics: statistics,
+        frequency_analysis: frequencyAnalysis,
+        batch_size_analysis: batchSizeAnalysis,
+        performance_analysis: performanceAnalysis,
+        failure_analysis: failureAnalysis,
+        slow_task_analysis: slowTaskAnalysis,
+        issues: issuesAndRecommendations.issues,
+        warnings: issuesAndRecommendations.warnings,
+        recommendations: issuesAndRecommendations.recommendations,
+      };
+    } catch (error) {
+      console.error(`❌ Stream Load 任务检查失败: ${error.message}`);
+      return {
+        status: 'error',
+        error: error.message,
+        analysis_duration_ms: Date.now() - startTime,
+      };
+    }
+  }
+
+  /**
+   * 计算 Stream Load 基础统计
+   */
+  calculateStreamLoadStatistics(loads) {
+    const totalLoads = loads.length;
+    const successLoadsArray = loads.filter((l) => l.state === 'FINISHED');
+    const successLoads = successLoadsArray.length;
+    const failedLoads = loads.filter((l) => l.state === 'CANCELLED').length;
+    const successRate = (successLoads / totalLoads) * 100;
+
+    // 计算总行数和字节数（所有任务）
+    const totalScanRows = loads.reduce((sum, l) => sum + (l.scan_rows || 0), 0);
+    const totalScanBytes = loads.reduce(
+      (sum, l) => sum + (l.scan_bytes || 0),
+      0,
+    );
+    const totalSinkRows = loads.reduce((sum, l) => sum + (l.sink_rows || 0), 0);
+    const totalFilteredRows = loads.reduce(
+      (sum, l) => sum + (l.filtered_rows || 0),
+      0,
+    );
+
+    // 计算成功任务的平均值
+    const successSinkRows = successLoadsArray.reduce(
+      (sum, l) => sum + (l.sink_rows || 0),
+      0,
+    );
+    const successScanBytes = successLoadsArray.reduce(
+      (sum, l) => sum + (l.scan_bytes || 0),
+      0,
+    );
+
+    // 时间跨度
+    const firstLoad = loads[loads.length - 1];
+    const lastLoad = loads[0];
+    const timeSpanSeconds =
+      (new Date(lastLoad.create_time) - new Date(firstLoad.create_time)) / 1000;
+
+    return {
+      total_loads: totalLoads,
+      success_loads: successLoads,
+      failed_loads: failedLoads,
+      success_rate: parseFloat(successRate.toFixed(2)),
+      total_scan_rows: totalScanRows,
+      total_scan_bytes: totalScanBytes,
+      total_sink_rows: totalSinkRows,
+      total_filtered_rows: totalFilteredRows,
+      avg_rows_per_load:
+        successLoads > 0 ? Math.round(successSinkRows / successLoads) : 0,
+      avg_bytes_per_load:
+        successLoads > 0 ? Math.round(successScanBytes / successLoads) : 0,
+      time_span_seconds: Math.round(timeSpanSeconds),
+      first_load_time: firstLoad.create_time,
+      last_load_time: lastLoad.create_time,
+    };
+  }
+
+  /**
+   * 分析 Stream Load 频率
+   */
+  analyzeStreamLoadFrequency(loads) {
+    if (loads.length < 2) {
+      return {
+        status: 'insufficient_data',
+        message: '数据量不足，无法分析频率',
+      };
+    }
+
+    // 按时间排序
+    const sortedLoads = [...loads].sort(
+      (a, b) => new Date(a.create_time) - new Date(b.create_time),
+    );
+
+    // 计算间隔
+    const intervals = [];
+    for (let i = 1; i < sortedLoads.length; i++) {
+      const interval =
+        (new Date(sortedLoads[i].create_time) -
+          new Date(sortedLoads[i - 1].create_time)) /
+        1000;
+      intervals.push(interval);
+    }
+
+    // 统计指标
+    const avgInterval =
+      intervals.reduce((sum, val) => sum + val, 0) / intervals.length;
+    const minInterval = Math.min(...intervals);
+    const maxInterval = Math.max(...intervals);
+
+    // 频率等级
+    let frequencyLevel = 'low';
+    let frequencyDescription = '';
+    const loadsPerMinute = 60 / avgInterval;
+    const loadsPerHour = 3600 / avgInterval;
+
+    if (loadsPerMinute > 60) {
+      frequencyLevel = 'extreme';
+      frequencyDescription = '极高频 (每秒多次)';
+    } else if (loadsPerMinute > 4) {
+      frequencyLevel = 'very_high';
+      frequencyDescription = '超高频 (每分钟4+次)';
+    } else if (loadsPerMinute > 1) {
+      frequencyLevel = 'high';
+      frequencyDescription = '高频 (每分钟1+次)';
+    } else if (loadsPerHour > 1) {
+      frequencyLevel = 'moderate';
+      frequencyDescription = '中等 (每小时1+次)';
+    } else {
+      frequencyLevel = 'low';
+      frequencyDescription = '低频 (每小时<1次)';
+    }
+
+    return {
+      avg_interval_seconds: parseFloat(avgInterval.toFixed(2)),
+      min_interval_seconds: parseFloat(minInterval.toFixed(2)),
+      max_interval_seconds: parseFloat(maxInterval.toFixed(2)),
+      loads_per_minute: parseFloat(loadsPerMinute.toFixed(2)),
+      loads_per_hour: parseFloat(loadsPerHour.toFixed(1)),
+      loads_per_day: parseFloat((loadsPerHour * 24).toFixed(0)),
+      frequency_level: frequencyLevel,
+      frequency_description: frequencyDescription,
+    };
+  }
+
+  /**
+   * 分析批次大小（仅分析成功的任务）
+   */
+  analyzeStreamLoadBatchSize(loads) {
+    // 只分析成功的任务
+    const successLoads = loads.filter((l) => l.state === 'FINISHED');
+
+    if (successLoads.length === 0) {
+      return {
+        status: 'no_success_loads',
+        message: '没有成功的任务可以分析',
+      };
+    }
+
+    const rowCounts = successLoads.map((l) => l.sink_rows || 0);
+    const byteSizes = successLoads.map((l) => l.scan_bytes || 0);
+
+    // 行数统计
+    const avgRows =
+      rowCounts.reduce((sum, val) => sum + val, 0) / successLoads.length;
+    const minRows = Math.min(...rowCounts);
+    const maxRows = Math.max(...rowCounts);
+    const medianRows = this.calculateMedian(rowCounts);
+
+    // 字节数统计
+    const avgBytes =
+      byteSizes.reduce((sum, val) => sum + val, 0) / successLoads.length;
+    const minBytes = Math.min(...byteSizes);
+    const maxBytes = Math.max(...byteSizes);
+    const medianBytes = this.calculateMedian(byteSizes);
+
+    // 标准差
+    const rowsStdDev = Math.sqrt(
+      rowCounts.reduce((sum, val) => sum + Math.pow(val - avgRows, 2), 0) /
+        successLoads.length,
+    );
+    const bytesStdDev = Math.sqrt(
+      byteSizes.reduce((sum, val) => sum + Math.pow(val - avgBytes, 2), 0) /
+        successLoads.length,
+    );
+
+    // 批次大小分布
+    const distribution = this.calculateBatchSizeDistribution(rowCounts);
+
+    // 一致性评分
+    const rowsCv = rowsStdDev / avgRows;
+    let consistency = 'poor';
+    let consistencyScore = 0;
+
+    if (rowsCv < 0.1) {
+      consistency = 'excellent';
+      consistencyScore = 95;
+    } else if (rowsCv < 0.3) {
+      consistency = 'good';
+      consistencyScore = 80;
+    } else if (rowsCv < 0.5) {
+      consistency = 'fair';
+      consistencyScore = 60;
+    } else {
+      consistency = 'poor';
+      consistencyScore = 40;
+    }
+
+    return {
+      analyzed_success_loads: successLoads.length,
+      rows: {
+        avg: Math.round(avgRows),
+        min: minRows,
+        max: maxRows,
+        median: Math.round(medianRows),
+        std_dev: Math.round(rowsStdDev),
+        coefficient_of_variation: parseFloat((rowsCv * 100).toFixed(2)),
+      },
+      bytes: {
+        avg: Math.round(avgBytes),
+        min: minBytes,
+        max: maxBytes,
+        median: Math.round(medianBytes),
+        std_dev: Math.round(bytesStdDev),
+        avg_mb: parseFloat((avgBytes / 1024 / 1024).toFixed(2)),
+      },
+      distribution: distribution,
+      consistency: consistency,
+      consistency_score: consistencyScore,
+    };
+  }
+
+  /**
+   * 计算中位数
+   */
+  calculateMedian(values) {
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0
+      ? (sorted[mid - 1] + sorted[mid]) / 2
+      : sorted[mid];
+  }
+
+  /**
+   * 计算批次大小分布
+   */
+  calculateBatchSizeDistribution(rowCounts) {
+    const ranges = {
+      tiny: 0, // < 1K
+      small: 0, // 1K - 10K
+      medium: 0, // 10K - 100K
+      large: 0, // 100K - 1M
+      huge: 0, // > 1M
+    };
+
+    rowCounts.forEach((count) => {
+      if (count < 1000) ranges.tiny++;
+      else if (count < 10000) ranges.small++;
+      else if (count < 100000) ranges.medium++;
+      else if (count < 1000000) ranges.large++;
+      else ranges.huge++;
+    });
+
+    const total = rowCounts.length;
+    return {
+      tiny: {
+        count: ranges.tiny,
+        percentage: ((ranges.tiny / total) * 100).toFixed(1),
+      },
+      small: {
+        count: ranges.small,
+        percentage: ((ranges.small / total) * 100).toFixed(1),
+      },
+      medium: {
+        count: ranges.medium,
+        percentage: ((ranges.medium / total) * 100).toFixed(1),
+      },
+      large: {
+        count: ranges.large,
+        percentage: ((ranges.large / total) * 100).toFixed(1),
+      },
+      huge: {
+        count: ranges.huge,
+        percentage: ((ranges.huge / total) * 100).toFixed(1),
+      },
+    };
+  }
+
+  /**
+   * 分析 Stream Load 性能
+   */
+  analyzeStreamLoadPerformance(loads) {
+    const successLoads = loads.filter((l) => l.state === 'FINISHED');
+
+    if (successLoads.length === 0) {
+      return {
+        status: 'no_success_loads',
+        message: '没有成功的加载任务',
+      };
+    }
+
+    // 计算加载耗时
+    const durations = successLoads
+      .map((l) => {
+        if (!l.load_start_time || !l.load_finish_time) return null;
+        return (
+          (new Date(l.load_finish_time) - new Date(l.load_start_time)) / 1000
+        );
+      })
+      .filter((d) => d !== null && d > 0);
+
+    // 计算吞吐量
+    const throughputs = successLoads
+      .map((l) => {
+        if (!l.load_start_time || !l.load_finish_time || !l.scan_bytes)
+          return null;
+        const duration =
+          (new Date(l.load_finish_time) - new Date(l.load_start_time)) / 1000;
+        if (duration <= 0) return null;
+        return l.scan_bytes / duration / 1024 / 1024; // MB/s
+      })
+      .filter((t) => t !== null && t > 0);
+
+    const avgDuration =
+      durations.length > 0
+        ? durations.reduce((sum, val) => sum + val, 0) / durations.length
+        : 0;
+    const avgThroughput =
+      throughputs.length > 0
+        ? throughputs.reduce((sum, val) => sum + val, 0) / throughputs.length
+        : 0;
+    const minThroughput = throughputs.length > 0 ? Math.min(...throughputs) : 0;
+    const maxThroughput = throughputs.length > 0 ? Math.max(...throughputs) : 0;
+
+    return {
+      avg_load_duration_seconds: parseFloat(avgDuration.toFixed(2)),
+      avg_throughput_mbps: parseFloat(avgThroughput.toFixed(2)),
+      min_throughput_mbps: parseFloat(minThroughput.toFixed(2)),
+      max_throughput_mbps: parseFloat(maxThroughput.toFixed(2)),
+      analyzed_tasks: durations.length,
+    };
+  }
+
+  /**
+   * 分析失败情况
+   */
+  analyzeStreamLoadFailures(loads) {
+    const failedLoads = loads.filter((l) => l.state === 'CANCELLED');
+
+    if (failedLoads.length === 0) {
+      return {
+        failed_count: 0,
+        failure_rate: 0,
+        message: '没有失败的任务',
+      };
+    }
+
+    // 统计错误类型
+    const errorTypes = {};
+    failedLoads.forEach((load) => {
+      if (!load.error_msg) return;
+      const errorMsg = load.error_msg.toLowerCase();
+
+      let errorType = 'unknown';
+      if (errorMsg.includes('timeout')) errorType = 'timeout';
+      else if (errorMsg.includes('format') || errorMsg.includes('parse'))
+        errorType = 'format_error';
+      else if (errorMsg.includes('permission') || errorMsg.includes('access'))
+        errorType = 'permission_error';
+      else if (errorMsg.includes('memory') || errorMsg.includes('oom'))
+        errorType = 'memory_error';
+      else if (errorMsg.includes('duplicate') || errorMsg.includes('key'))
+        errorType = 'duplicate_key';
+
+      errorTypes[errorType] = (errorTypes[errorType] || 0) + 1;
+    });
+
+    return {
+      failed_count: failedLoads.length,
+      failure_rate: parseFloat(
+        ((failedLoads.length / loads.length) * 100).toFixed(2),
+      ),
+      error_types: errorTypes,
+      recent_failures: failedLoads.slice(0, 5).map((l) => ({
+        label: l.label,
+        create_time: l.create_time,
+        error: l.error_msg,
+      })),
+    };
+  }
+
+  /**
+   * 分析慢 Stream Load 任务
+   */
+  analyzeSlowStreamLoadTasks(loads, thresholdSeconds = 10) {
+    // 只分析成功的任务
+    const successLoads = loads.filter((l) => l.state === 'FINISHED');
+
+    if (successLoads.length === 0) {
+      return {
+        status: 'no_success_loads',
+        message: '没有成功的任务可以分析',
+      };
+    }
+
+    // 找到慢任务
+    const slowTasks = [];
+    successLoads.forEach((load) => {
+      const createTime = new Date(load.create_time);
+      const finishTime = new Date(load.load_finish_time);
+      const commitTime = new Date(load.load_commit_time);
+
+      // 总耗时 = load_finish_time - create_time
+      const totalDuration = (finishTime - createTime) / 1000; // 秒
+
+      if (totalDuration > thresholdSeconds) {
+        // 数据写入耗时 = load_commit_time - create_time
+        const writeDuration = (commitTime - createTime) / 1000;
+        // 事务提交耗时 = load_finish_time - load_commit_time
+        const commitDuration = (finishTime - commitTime) / 1000;
+
+        slowTasks.push({
+          label: load.label,
+          create_time: load.create_time,
+          load_finish_time: load.load_finish_time,
+          load_commit_time: load.load_commit_time,
+          total_duration_seconds: parseFloat(totalDuration.toFixed(2)),
+          write_duration_seconds: parseFloat(writeDuration.toFixed(2)),
+          commit_duration_seconds: parseFloat(commitDuration.toFixed(2)),
+          sink_rows: load.sink_rows || 0,
+          scan_bytes: load.scan_bytes || 0,
+          write_throughput_mbps: parseFloat(
+            ((load.scan_bytes || 0) / 1024 / 1024 / writeDuration).toFixed(2),
+          ),
+        });
+      }
+    });
+
+    if (slowTasks.length === 0) {
+      return {
+        status: 'ok',
+        message: `没有超过 ${thresholdSeconds} 秒的慢任务`,
+        threshold_seconds: thresholdSeconds,
+        analyzed_success_loads: successLoads.length,
+      };
+    }
+
+    // 按总耗时排序
+    slowTasks.sort(
+      (a, b) => b.total_duration_seconds - a.total_duration_seconds,
+    );
+
+    // 计算统计信息
+    const avgTotalDuration =
+      slowTasks.reduce((sum, t) => sum + t.total_duration_seconds, 0) /
+      slowTasks.length;
+    const avgWriteDuration =
+      slowTasks.reduce((sum, t) => sum + t.write_duration_seconds, 0) /
+      slowTasks.length;
+    const avgCommitDuration =
+      slowTasks.reduce((sum, t) => sum + t.commit_duration_seconds, 0) /
+      slowTasks.length;
+
+    // 计算写入和提交耗时的占比
+    const writeRatio = (avgWriteDuration / avgTotalDuration) * 100;
+    const commitRatio = (avgCommitDuration / avgTotalDuration) * 100;
+
+    return {
+      status: 'found_slow_tasks',
+      threshold_seconds: thresholdSeconds,
+      analyzed_success_loads: successLoads.length,
+      slow_task_count: slowTasks.length,
+      slow_task_ratio: parseFloat(
+        ((slowTasks.length / successLoads.length) * 100).toFixed(2),
+      ),
+      statistics: {
+        avg_total_duration_seconds: parseFloat(avgTotalDuration.toFixed(2)),
+        avg_write_duration_seconds: parseFloat(avgWriteDuration.toFixed(2)),
+        avg_commit_duration_seconds: parseFloat(avgCommitDuration.toFixed(2)),
+        write_duration_ratio: parseFloat(writeRatio.toFixed(2)),
+        commit_duration_ratio: parseFloat(commitRatio.toFixed(2)),
+      },
+      slowest_tasks: slowTasks.slice(0, 10), // 返回前10个最慢的任务
+    };
+  }
+
+  /**
+   * 生成问题和建议
+   */
+  generateStreamLoadIssuesAndRecommendations(
+    statistics,
+    frequencyAnalysis,
+    batchSizeAnalysis,
+    performanceAnalysis,
+    failureAnalysis,
+  ) {
+    const issues = [];
+    const warnings = [];
+    const recommendations = [];
+
+    // 1. 失败率检查
+    if (failureAnalysis.failure_rate > 10) {
+      issues.push({
+        type: 'high_failure_rate',
+        severity: 'HIGH',
+        message: `失败率过高: ${failureAnalysis.failure_rate}%`,
+        impact: '数据导入质量受影响',
+      });
+      recommendations.push({
+        priority: 'HIGH',
+        message: '检查失败原因，修复数据格式或配置问题',
+        error_types: failureAnalysis.error_types,
+      });
+    } else if (failureAnalysis.failure_rate > 5) {
+      warnings.push({
+        type: 'moderate_failure_rate',
+        severity: 'MEDIUM',
+        message: `失败率较高: ${failureAnalysis.failure_rate}%`,
+      });
+    }
+
+    // 2. 频率检查
+    if (
+      frequencyAnalysis.frequency_level === 'extreme' ||
+      frequencyAnalysis.frequency_level === 'very_high'
+    ) {
+      warnings.push({
+        type: 'very_high_frequency',
+        severity: 'MEDIUM',
+        message: `导入频率过高: ${frequencyAnalysis.loads_per_minute.toFixed(1)} 次/分钟`,
+        impact: '可能导致系统负载过高',
+      });
+      recommendations.push({
+        priority: 'MEDIUM',
+        message: '考虑合并小批次，减少导入频率',
+        suggestion: `当前平均间隔 ${frequencyAnalysis.avg_interval_seconds}秒，建议增加到 30-60秒`,
+      });
+    }
+
+    // 3. 批次大小检查
+    if (batchSizeAnalysis.consistency === 'poor') {
+      warnings.push({
+        type: 'inconsistent_batch_size',
+        severity: 'LOW',
+        message: '批次大小不一致',
+        cv: `变异系数 ${batchSizeAnalysis.rows.coefficient_of_variation}%`,
+      });
+      recommendations.push({
+        priority: 'LOW',
+        message: '建立更一致的批次大小策略，提高可预测性',
+      });
+    }
+
+    if (statistics.avg_rows_per_load < 1000) {
+      warnings.push({
+        type: 'small_batch_size',
+        severity: 'MEDIUM',
+        message: `批次过小: 平均 ${statistics.avg_rows_per_load.toLocaleString()} 行`,
+        impact: '导入效率低下',
+      });
+      recommendations.push({
+        priority: 'HIGH',
+        message: '增加批次大小以提高吞吐量',
+        suggestion: '建议每批次至少 10,000 行',
+      });
+    }
+
+    // 4. 性能检查
+    if (
+      performanceAnalysis.avg_throughput_mbps &&
+      performanceAnalysis.avg_throughput_mbps < 10
+    ) {
+      warnings.push({
+        type: 'low_throughput',
+        severity: 'MEDIUM',
+        message: `吞吐量较低: ${performanceAnalysis.avg_throughput_mbps} MB/s`,
+      });
+      recommendations.push({
+        priority: 'MEDIUM',
+        message: '优化批次大小或增加并行度以提高吞吐量',
+      });
+    }
+
+    // 5. 规律性检查
+    if (
+      frequencyAnalysis.regularity === 'irregular' &&
+      frequencyAnalysis.loads_per_hour > 10
+    ) {
+      recommendations.push({
+        priority: 'LOW',
+        message: '建立规律的导入调度，提高系统可预测性',
+        regularity_score: frequencyAnalysis.regularity_score,
+      });
+    }
+
+    return {
+      issues,
+      warnings,
+      recommendations,
+    };
+  }
+
+  /**
+   * 计算健康分数
+   */
+  calculateStreamLoadHealthScore(
+    statistics,
+    frequencyAnalysis,
+    performanceAnalysis,
+  ) {
+    let score = 100;
+
+    // 成功率影响
+    if (statistics.success_rate < 90) score -= 20;
+    else if (statistics.success_rate < 95) score -= 10;
+    else if (statistics.success_rate < 99) score -= 5;
+
+    // 频率规律性影响
+    score -= (100 - frequencyAnalysis.regularity_score) * 0.2;
+
+    // 吞吐量影响
+    if (
+      performanceAnalysis.avg_throughput_mbps &&
+      performanceAnalysis.avg_throughput_mbps < 5
+    ) {
+      score -= 15;
+    } else if (
+      performanceAnalysis.avg_throughput_mbps &&
+      performanceAnalysis.avg_throughput_mbps < 10
+    ) {
+      score -= 5;
+    }
+
+    score = Math.max(0, Math.min(100, score));
+
+    let level = 'EXCELLENT';
+    if (score < 50) level = 'POOR';
+    else if (score < 70) level = 'FAIR';
+    else if (score < 85) level = 'GOOD';
+
+    return {
+      score: Math.round(score),
+      level: level,
+    };
+  }
+
+  /**
+   * 格式化 Stream Load 检查报告
+   */
+  formatStreamLoadTasksReport(result) {
+    if (result.status === 'no_data') {
+      return `ℹ️  ${result.message}`;
+    }
+
+    if (result.status !== 'completed') {
+      return `❌ Stream Load 检查失败: ${result.error}`;
+    }
+
+    let report = `📊 Stream Load 任务检查报告\n`;
+    report += `==========================================\n`;
+    report += `表: ${result.database}.${result.table}\n`;
+    report += `分析周期: 最近 ${result.analysis_period_days} 天\n`;
+    report += `健康评分: ${result.health_score.score}/100 (${result.health_score.level})\n\n`;
+
+    // 基础统计
+    const stats = result.statistics;
+    report += `📈 基础统计:\n`;
+    report += `   总任务数: ${stats.total_loads.toLocaleString()}\n`;
+    report += `   成功任务: ${stats.success_loads.toLocaleString()} (${stats.success_rate}%)\n`;
+    report += `   失败任务: ${stats.failed_loads.toLocaleString()}\n`;
+    report += `   总扫描行: ${stats.total_scan_rows.toLocaleString()}\n`;
+    report += `   总数据量: ${this.formatBytes(stats.total_scan_bytes)}\n`;
+    report += `   平均行数/任务: ${stats.avg_rows_per_load.toLocaleString()}\n`;
+    report += `   平均数据量/任务: ${this.formatBytes(stats.avg_bytes_per_load)}\n\n`;
+
+    // 频率分析
+    const freq = result.frequency_analysis;
+    if (freq.status !== 'insufficient_data') {
+      report += `⏱️  频率分析:\n`;
+      report += `   频率等级: ${freq.frequency_description}\n`;
+      report += `   每分钟: ${freq.loads_per_minute} 次\n`;
+      report += `   每小时: ${freq.loads_per_hour} 次\n`;
+      report += `   每天: ${freq.loads_per_day} 次\n`;
+      report += `   平均间隔: ${freq.avg_interval_seconds} 秒\n\n`;
+    }
+
+    // 批次大小分析
+    const batch = result.batch_size_analysis;
+    if (batch.status !== 'no_success_loads') {
+      report += `📦 批次大小分析（基于成功任务）:\n`;
+      report += `   分析任务数: ${batch.analyzed_success_loads}\n`;
+      report += `   平均行数: ${batch.rows.avg.toLocaleString()}\n`;
+      report += `   行数范围: ${batch.rows.min.toLocaleString()} - ${batch.rows.max.toLocaleString()}\n`;
+      report += `   中位数: ${batch.rows.median.toLocaleString()}\n`;
+      report += `   一致性: ${batch.consistency} (评分: ${batch.consistency_score}/100)\n`;
+      report += `   平均数据量: ${batch.bytes.avg_mb} MB\n`;
+      report += `   批次分布:\n`;
+      report += `     - 微小 (<1K): ${batch.distribution.tiny.count} (${batch.distribution.tiny.percentage}%)\n`;
+      report += `     - 小 (1K-10K): ${batch.distribution.small.count} (${batch.distribution.small.percentage}%)\n`;
+      report += `     - 中 (10K-100K): ${batch.distribution.medium.count} (${batch.distribution.medium.percentage}%)\n`;
+      report += `     - 大 (100K-1M): ${batch.distribution.large.count} (${batch.distribution.large.percentage}%)\n`;
+      report += `     - 巨大 (>1M): ${batch.distribution.huge.count} (${batch.distribution.huge.percentage}%)\n\n`;
+    } else {
+      report += `📦 批次大小分析:\n`;
+      report += `   ℹ️  ${batch.message}\n\n`;
+    }
+
+    // 性能分析
+    const perf = result.performance_analysis;
+    if (perf.status !== 'no_success_loads') {
+      report += `🚀 性能分析:\n`;
+      report += `   平均加载耗时: ${perf.avg_load_duration_seconds} 秒\n`;
+      report += `   平均吞吐量: ${perf.avg_throughput_mbps} MB/s\n`;
+      report += `   吞吐量范围: ${perf.min_throughput_mbps} - ${perf.max_throughput_mbps} MB/s\n`;
+      report += `   分析任务数: ${perf.analyzed_tasks}\n\n`;
+    }
+
+    // 失败分析
+    const failure = result.failure_analysis;
+    if (failure.failed_count > 0) {
+      report += `❌ 失败分析:\n`;
+      report += `   失败数量: ${failure.failed_count}\n`;
+      report += `   失败率: ${failure.failure_rate}%\n`;
+      if (Object.keys(failure.error_types).length > 0) {
+        report += `   错误类型:\n`;
+        Object.entries(failure.error_types).forEach(([type, count]) => {
+          report += `     - ${type}: ${count}\n`;
+        });
+      }
+      report += '\n';
+    }
+
+    // 慢任务分析
+    const slowTask = result.slow_task_analysis;
+    if (slowTask.status === 'found_slow_tasks') {
+      report += `🐌 慢任务分析 (阈值: ${slowTask.threshold_seconds}秒):\n`;
+      report += `   分析任务数: ${slowTask.analyzed_success_loads}\n`;
+      report += `   慢任务数量: ${slowTask.slow_task_count}\n`;
+      report += `   慢任务占比: ${slowTask.slow_task_ratio}%\n`;
+      report += `   平均总耗时: ${slowTask.statistics.avg_total_duration_seconds}秒\n`;
+      report += `     - 写入耗时: ${slowTask.statistics.avg_write_duration_seconds}秒 (${slowTask.statistics.write_duration_ratio}%)\n`;
+      report += `     - 提交耗时: ${slowTask.statistics.avg_commit_duration_seconds}秒 (${slowTask.statistics.commit_duration_ratio}%)\n`;
+
+      if (slowTask.slowest_tasks && slowTask.slowest_tasks.length > 0) {
+        report += `   最慢的前5个任务:\n`;
+        slowTask.slowest_tasks.slice(0, 5).forEach((task, index) => {
+          report += `     ${index + 1}. ${task.label}\n`;
+          report += `        总耗时: ${task.total_duration_seconds}秒 (写入: ${task.write_duration_seconds}s, 提交: ${task.commit_duration_seconds}s)\n`;
+          report += `        数据量: ${task.sink_rows.toLocaleString()} 行 / ${this.formatBytes(task.scan_bytes)}\n`;
+          report += `        吞吐量: ${task.write_throughput_mbps} MB/s\n`;
+        });
+      }
+      report += '\n';
+    }
+
+    // 问题
+    if (result.issues.length > 0) {
+      report += `⚠️  问题 (${result.issues.length}):\n`;
+      result.issues.forEach((issue) => {
+        report += `   🔥 ${issue.message}\n`;
+        if (issue.impact) report += `      影响: ${issue.impact}\n`;
+      });
+      report += '\n';
+    }
+
+    // 警告
+    if (result.warnings.length > 0) {
+      report += `💡 警告 (${result.warnings.length}):\n`;
+      result.warnings.slice(0, 5).forEach((warning) => {
+        report += `   ⚠️  ${warning.message}\n`;
+      });
+      report += '\n';
+    }
+
+    // 建议
+    if (result.recommendations.length > 0) {
+      report += `✨ 优化建议:\n`;
+      result.recommendations.slice(0, 5).forEach((rec, index) => {
+        const priorityIcon =
+          rec.priority === 'HIGH'
+            ? '🔥'
+            : rec.priority === 'MEDIUM'
+              ? '⚠️'
+              : 'ℹ️';
+        report += `   ${index + 1}. ${priorityIcon} ${rec.message}\n`;
+        if (rec.suggestion) report += `      ${rec.suggestion}\n`;
+      });
+    }
+
+    return report;
+  }
+
+  /**
    * 获取此专家提供的 MCP 工具处理器
    * @returns {Object} 工具名称到处理函数的映射
    */
@@ -2203,6 +3773,75 @@ class StarRocksImportExpert {
           report = `❌ 表 ${args.database_name}.${args.table_name} 导入频率分析失败\n`;
           report += `状态: ${result.status}\n`;
           report += `原因: ${result.error || result.message}\n`;
+          report += `耗时: ${result.analysis_duration_ms}ms`;
+        }
+
+        // 添加输出指示，引导 LLM 原样输出
+        const outputInstruction =
+          '📋 以下是预格式化的分析报告，请**原样输出**完整内容，不要总结或重新格式化：\n\n```\n';
+        const reportEnd = '\n```\n';
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: outputInstruction + report + reportEnd,
+            },
+          ],
+        };
+      },
+
+      check_stream_load_tasks: async (args, context) => {
+        const connection = context.connection;
+        const result = await this.checkStreamLoadTasks(
+          connection,
+          args.database_name,
+          args.table_name,
+          args.days || 7,
+        );
+
+        let report;
+        if (result.status === 'completed') {
+          report = this.formatStreamLoadTasksReport(result);
+        } else if (result.status === 'no_data') {
+          report = `ℹ️  ${result.message}`;
+        } else {
+          report = `❌ Stream Load 任务检查失败\n`;
+          report += `错误: ${result.error}\n`;
+          report += `耗时: ${result.analysis_duration_ms}ms`;
+        }
+
+        // 添加输出指示，引导 LLM 原样输出
+        const outputInstruction =
+          '📋 以下是预格式化的分析报告，请**原样输出**完整内容，不要总结或重新格式化：\n\n```\n';
+        const reportEnd = '\n```\n';
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: outputInstruction + report + reportEnd,
+            },
+          ],
+        };
+      },
+
+      check_routine_load_config: async (args, context) => {
+        const connection = context.connection;
+        const result = await this.checkRoutineLoadJobConfig(
+          connection,
+          args.job_name,
+          args.database_name,
+        );
+
+        let report;
+        if (result.status === 'completed') {
+          report = this.formatRoutineLoadConfigReport(result);
+        } else if (result.status === 'no_jobs') {
+          report = `ℹ️  ${result.message}`;
+        } else {
+          report = `❌ Routine Load 配置检查失败\n`;
+          report += `错误: ${result.error}\n`;
           report += `耗时: ${result.analysis_duration_ms}ms`;
         }
 
@@ -2252,8 +3891,52 @@ class StarRocksImportExpert {
           required: ['database_name', 'table_name'],
         },
       },
+      {
+        name: 'check_stream_load_tasks',
+        description:
+          '📊 Stream Load 任务检查 - 专门分析 Stream Load 任务的频率、批次大小和性能。\n\n功能：\n- 分析导入频率（每分钟/每小时/每天）和规律性\n- 统计平均导入行数和批次大小分布\n- 评估性能指标（吞吐量、加载耗时）\n- 检测失败率和错误类型\n- 识别小批次、高频率等性能问题\n- 提供批次大小和频率优化建议\n\n⚠️ 输出指示：此工具返回预格式化的详细报告，请**完整、原样**输出所有内容。不要总结或重新格式化报告内容。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            database_name: {
+              type: 'string',
+              description: '数据库名称',
+            },
+            table_name: {
+              type: 'string',
+              description: '表名称',
+            },
+            days: {
+              type: 'number',
+              description: '分析天数（默认7天）',
+              default: 7,
+            },
+          },
+          required: ['database_name', 'table_name'],
+        },
+      },
+      {
+        name: 'check_routine_load_config',
+        description:
+          '🔧 Routine Load 配置检查 - 检查 Routine Load 作业的配置参数，识别潜在问题并提供优化建议。\n\n功能：\n- 检查并发数、批次大小、错误容忍等关键参数\n- 分析 Kafka 分区与并发数的匹配情况\n- 评估作业性能（错误率、消费速度、吞吐量）\n- 检测作业状态异常（暂停、取消）\n- 提供具体的优化建议和 SQL 命令\n\n⚠️ 输出指示：此工具返回预格式化的详细报告，请**完整、原样**输出所有内容。不要总结或重新格式化报告内容。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            job_name: {
+              type: 'string',
+              description:
+                'Routine Load 作业名称（可选，不指定则检查所有作业）',
+            },
+            database_name: {
+              type: 'string',
+              description: '数据库名称（可选，用于过滤特定数据库的作业）',
+            },
+          },
+          required: [],
+        },
+      },
     ];
   }
 }
 
-export { StarRocksImportExpert };
+export { StarRocksIngestionExpert };

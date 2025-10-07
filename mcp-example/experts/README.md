@@ -40,20 +40,20 @@ StarRocks 专家系统 - 基于 MCP 协议的智能诊断和优化建议系统
 
 ---
 
-### 3. Import Expert (导入专家) ✅
+### 3. Ingestion Expert (数据摄入专家) ✅
 
-**文件**: `import-expert.js`
+**文件**: `ingestion-expert.js`
 
 **功能**:
 
-- 导入作业状态分析
-- 导入失败率监控
-- 导入队列积压检测
-- 导入性能优化建议
+- 数据摄入作业状态分析
+- 数据摄入失败率监控
+- 数据摄入队列积压检测
+- 数据摄入性能优化建议
 
 **工具**:
 
-- `analyze_table_import_frequency` - 分析表导入频率
+- `analyze_table_import_frequency` - 分析表数据摄入频率
 
 ---
 
@@ -313,7 +313,7 @@ terminology: {
 
 - [x] Storage Expert
 - [x] Compaction Expert
-- [x] Import Expert
+- [x] Ingestion Expert
 - [x] Cache Expert
 - [x] Cloud Native Cost Expert
 - [x] Transaction Expert

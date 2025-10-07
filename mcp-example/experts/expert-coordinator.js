@@ -13,7 +13,7 @@
 
 import { StarRocksStorageExpert } from './storage-expert.js';
 import { StarRocksCompactionExpert } from './compaction-expert-integrated.js';
-import { StarRocksImportExpert } from './import-expert.js';
+import { StarRocksIngestionExpert } from './ingestion-expert.js';
 import { StarRocksCacheExpert } from './cache-expert.js';
 import { StarRocksTransactionExpert } from './transaction-expert.js';
 import { StarRocksLogExpert } from './log-expert.js';
@@ -27,7 +27,7 @@ class StarRocksExpertCoordinator {
     this.experts = {
       storage: new StarRocksStorageExpert(),
       compaction: new StarRocksCompactionExpert(),
-      import: new StarRocksImportExpert(),
+      ingestion: new StarRocksIngestionExpert(),
       cache: new StarRocksCacheExpert(),
       transaction: new StarRocksTransactionExpert(),
       log: new StarRocksLogExpert(),
@@ -72,33 +72,34 @@ class StarRocksExpertCoordinator {
         explanation: 'Compaction线程不足是导致高CS积累的主要原因',
       },
 
-      // 导入失败与存储空间的关系
-      import_storage_impact: {
+      // 数据摄入失败与存储空间的关系
+      ingestion_storage_impact: {
         condition: (results) => {
           const storageResult = results.storage;
-          const importResult = results.import;
-          if (!storageResult || !importResult) return false;
+          const ingestionResult = results.ingestion;
+          if (!storageResult || !ingestionResult) return false;
 
           const diskCritical = storageResult.diagnosis_results.criticals.some(
             (c) => c.type.includes('disk'),
           );
-          const importFailures = importResult.diagnosis_results.criticals.some(
-            (c) => c.type.includes('failure_rate'),
-          );
-          return diskCritical && importFailures;
+          const ingestionFailures =
+            ingestionResult.diagnosis_results.criticals.some((c) =>
+              c.type.includes('failure_rate'),
+            );
+          return diskCritical && ingestionFailures;
         },
         impact: 'HIGH',
-        explanation: '存储空间不足可能导致导入作业失败，需要清理空间或扩容',
+        explanation: '存储空间不足可能导致数据摄入作业失败，需要清理空间或扩容',
       },
 
-      // 导入队列积压与Compaction的资源竞争
-      import_compaction_resource_conflict: {
+      // 数据摄入队列积压与Compaction的资源竞争
+      ingestion_compaction_resource_conflict: {
         condition: (results) => {
           const compactionResult = results.compaction;
-          const importResult = results.import;
-          if (!compactionResult || !importResult) return false;
+          const ingestionResult = results.ingestion;
+          if (!compactionResult || !ingestionResult) return false;
 
-          const queueBacklog = importResult.diagnosis_results.criticals.some(
+          const queueBacklog = ingestionResult.diagnosis_results.criticals.some(
             (c) => c.type === 'load_queue_backlog',
           );
           const compactionPressure =
@@ -108,7 +109,7 @@ class StarRocksExpertCoordinator {
           return queueBacklog && compactionPressure;
         },
         impact: 'MEDIUM',
-        explanation: '导入队列积压和Compaction压力可能存在CPU/内存资源竞争',
+        explanation: '数据摄入队列积压和Compaction压力可能存在CPU/内存资源竞争',
       },
 
       // 缓存命中率低与Compaction的关系
@@ -160,7 +161,7 @@ class StarRocksExpertCoordinator {
   async performCoordinatedAnalysis(connection, options = {}) {
     const {
       includeDetails = false,
-      expertScope = ['storage', 'compaction', 'import', 'cache'], // 可选择特定专家
+      expertScope = ['storage', 'compaction', 'ingestion', 'cache'], // 可选择特定专家
       includeCrossAnalysis = true,
     } = options;
 
@@ -716,17 +717,17 @@ class StarRocksExpertCoordinator {
           data: result,
         };
       },
-      import_expert_analysis: async (args, context) => {
+      ingestion_expert_analysis: async (args, context) => {
         const connection = context.connection;
         const includeDetails = args.include_details || false;
-        console.error('🚀 启动导入专家单独分析...');
-        const result = await this.experts.import.analyze(connection, {
+        console.error('🚀 启动数据摄入专家单独分析...');
+        const result = await this.experts.ingestion.analyze(connection, {
           includeDetails,
         });
         return {
           _needsFormatting: true,
           _formatType: 'single_expert',
-          _expertType: 'import',
+          _expertType: 'ingestion',
           data: result,
         };
       },
@@ -872,8 +873,8 @@ class StarRocksExpertCoordinator {
         },
       },
       {
-        name: 'import_expert_analysis',
-        description: '📥 Import专家分析 - 分析导入任务状态、性能和频率',
+        name: 'ingestion_expert_analysis',
+        description: '📥 Ingestion专家分析 - 分析数据摄入任务状态、性能和频率',
         inputSchema: {
           type: 'object',
           properties: {
