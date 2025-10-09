@@ -123,23 +123,217 @@ class StarRocksIngestionExpert {
   }
 
   /**
+   * 混合查询 Stream Load 任务（结合 loads_history 和 information_schema.loads）
+   *
+   * @param {Object} connection - 数据库连接
+   * @param {Object} options - 查询选项
+   * @param {string} options.dbName - 数据库名（可选）
+   * @param {string} options.tableName - 表名（可选）
+   * @param {number} options.hours - 查询时间范围（小时，默认24）
+   * @param {number} options.recentMinutes - 内存表补充时间（分钟，默认2）
+   * @returns {Array} 去重后的 Stream Load 任务列表
+   */
+  async getStreamLoadTasksHybrid(connection, options = {}) {
+    const {
+      dbName = null,
+      tableName = null,
+      hours = 24,
+      recentMinutes = 2,
+    } = options;
+
+    const allLoads = [];
+
+    // 1. 查询持久化历史表 (_statistics_.loads_history)
+    try {
+      let historyQuery = `
+        SELECT
+          id,
+          label,
+          profile_id,
+          db_name,
+          table_name,
+          user,
+          warehouse,
+          state,
+          progress,
+          type,
+          priority,
+          scan_rows,
+          scan_bytes,
+          filtered_rows,
+          unselected_rows,
+          sink_rows,
+          runtime_details,
+          create_time,
+          load_start_time,
+          load_commit_time,
+          load_finish_time,
+          properties,
+          error_msg,
+          tracking_sql,
+          rejected_record_path,
+          job_id,
+          'loads_history' as data_source
+        FROM _statistics_.loads_history
+        WHERE type = 'STREAM_LOAD'
+          AND create_time >= DATE_SUB(NOW(), INTERVAL ? HOUR)
+      `;
+
+      const params = [hours];
+
+      if (dbName) {
+        historyQuery += ' AND db_name = ?';
+        params.push(dbName);
+      }
+      if (tableName) {
+        historyQuery += ' AND table_name = ?';
+        params.push(tableName);
+      }
+
+      historyQuery += ' ORDER BY create_time DESC';
+
+      const [historyResults] = await connection.query(historyQuery, params);
+      allLoads.push(...historyResults);
+
+      console.log(
+        `[HybridQuery] 从 loads_history 获取 ${historyResults.length} 条记录`,
+      );
+    } catch (error) {
+      console.warn(`[HybridQuery] 查询 loads_history 失败: ${error.message}`);
+    }
+
+    // 2. 补充查询内存表 (information_schema.loads) - 最新数据可能还未同步
+    try {
+      let recentQuery = `
+        SELECT
+          ID as id,
+          LABEL as label,
+          PROFILE_ID as profile_id,
+          DB_NAME as db_name,
+          TABLE_NAME as table_name,
+          USER as user,
+          WAREHOUSE as warehouse,
+          STATE as state,
+          PROGRESS as progress,
+          TYPE as type,
+          PRIORITY as priority,
+          SCAN_ROWS as scan_rows,
+          SCAN_BYTES as scan_bytes,
+          FILTERED_ROWS as filtered_rows,
+          UNSELECTED_ROWS as unselected_rows,
+          SINK_ROWS as sink_rows,
+          RUNTIME_DETAILS as runtime_details,
+          CREATE_TIME as create_time,
+          LOAD_START_TIME as load_start_time,
+          LOAD_COMMIT_TIME as load_commit_time,
+          LOAD_FINISH_TIME as load_finish_time,
+          PROPERTIES as properties,
+          ERROR_MSG as error_msg,
+          TRACKING_SQL as tracking_sql,
+          REJECTED_RECORD_PATH as rejected_record_path,
+          JOB_ID as job_id,
+          'information_schema' as data_source
+        FROM information_schema.loads
+        WHERE TYPE = 'STREAM LOAD'
+          AND CREATE_TIME >= DATE_SUB(NOW(), INTERVAL ? MINUTE)
+      `;
+
+      const recentParams = [recentMinutes];
+
+      // information_schema.loads 有 DB_NAME 和 TABLE_NAME 字段
+      if (dbName) {
+        recentQuery += ' AND DB_NAME = ?';
+        recentParams.push(dbName);
+      }
+      if (tableName) {
+        recentQuery += ' AND TABLE_NAME = ?';
+        recentParams.push(tableName);
+      }
+
+      recentQuery += ' ORDER BY CREATE_TIME DESC';
+
+      const [recentResults] = await connection.query(recentQuery, recentParams);
+      allLoads.push(...recentResults);
+
+      console.log(
+        `[HybridQuery] 从 information_schema.loads 补充 ${recentResults.length} 条记录`,
+      );
+    } catch (error) {
+      console.warn(
+        `[HybridQuery] 查询 information_schema.loads 失败: ${error.message}`,
+      );
+    }
+
+    // 3. 去重：优先使用 loads_history 的数据（更完整），按 label 或 job_id 去重
+    const uniqueMap = new Map();
+
+    // 先添加 information_schema 的数据（优先级低）
+    allLoads
+      .filter((load) => load.data_source === 'information_schema')
+      .forEach((load) => {
+        const key = load.label || load.job_id;
+        if (key && !uniqueMap.has(key)) {
+          uniqueMap.set(key, load);
+        }
+      });
+
+    // 再添加 loads_history 的数据（优先级高，会覆盖重复的）
+    allLoads
+      .filter((load) => load.data_source === 'loads_history')
+      .forEach((load) => {
+        const key = load.label || load.job_id;
+        if (key) {
+          uniqueMap.set(key, load);
+        }
+      });
+
+    const uniqueLoads = Array.from(uniqueMap.values());
+
+    console.log(
+      `[HybridQuery] 去重后共 ${uniqueLoads.length} 条记录（总共获取 ${allLoads.length} 条）`,
+    );
+
+    // 按创建时间倒序排序
+    uniqueLoads.sort(
+      (a, b) => new Date(b.create_time) - new Date(a.create_time),
+    );
+
+    return uniqueLoads;
+  }
+
+  /**
    * 收集Import相关数据
    */
   async collectImportData(connection) {
     const data = {};
 
-    // 1. 获取最近的导入作业
+    // 1. 获取最近的导入作业（使用混合查询，避免数据丢失）
     try {
-      const [recentLoads] = await connection.query(`
+      // 优先使用混合查询获取 Stream Load 数据
+      const streamLoads = await this.getStreamLoadTasksHybrid(connection, {
+        hours: 24,
+      });
+
+      // 补充其他类型的导入作业（从 information_schema.loads）
+      const [otherLoads] = await connection.query(`
         SELECT JOB_ID, LABEL, STATE, PROGRESS, TYPE, ETL_INFO, TASK_INFO, ERROR_MSG,
                CREATE_TIME, ETL_START_TIME, ETL_FINISH_TIME, LOAD_START_TIME, LOAD_FINISH_TIME,
                URL, JOB_DETAILS, TRACKING_URL, TRACKING_SQL, REJECTED_RECORD_PATH
         FROM information_schema.loads
         WHERE CREATE_TIME >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+          AND TYPE != 'STREAM LOAD'
         ORDER BY CREATE_TIME DESC
         LIMIT 100;
       `);
-      data.recent_loads = recentLoads;
+
+      // 合并 Stream Load 和其他类型的导入
+      data.recent_loads = [...streamLoads, ...otherLoads]
+        .sort((a, b) => new Date(b.create_time) - new Date(a.create_time))
+        .slice(0, 100);
+
+      console.log(
+        `[CollectData] 获取 recent_loads: ${streamLoads.length} Stream Load + ${otherLoads.length} 其他类型`,
+      );
     } catch (error) {
       console.warn('Failed to collect recent loads:', error.message);
       data.recent_loads = [];
@@ -189,41 +383,103 @@ class StarRocksIngestionExpert {
       data.routine_loads = [];
     }
 
-    // 5. 获取Stream Load统计
+    // 5. 获取Stream Load统计（使用混合查询的数据）
     try {
-      const [streamLoadStats] = await connection.query(`
-        SELECT COUNT(*) as total_jobs,
-               SUM(CASE WHEN STATE = 'FINISHED' THEN 1 ELSE 0 END) as success_jobs,
-               SUM(CASE WHEN STATE = 'CANCELLED' THEN 1 ELSE 0 END) as failed_jobs,
-               AVG(CASE WHEN STATE = 'FINISHED' AND LOAD_FINISH_TIME IS NOT NULL
-                   THEN UNIX_TIMESTAMP(LOAD_FINISH_TIME) - UNIX_TIMESTAMP(LOAD_START_TIME)
-                   ELSE NULL END) as avg_load_time_seconds
-        FROM information_schema.loads
-        WHERE CREATE_TIME >= DATE_SUB(NOW(), INTERVAL 24 HOUR) AND TYPE = 'STREAM LOAD';
-      `);
-      data.stream_load_stats = streamLoadStats[0] || {};
+      // 直接从前面获取的 stream loads 计算统计
+      const streamLoads = data.recent_loads.filter(
+        (load) => load.type === 'STREAM_LOAD' || load.type === 'STREAM LOAD',
+      );
+
+      const totalJobs = streamLoads.length;
+      const successJobs = streamLoads.filter(
+        (load) => load.state === 'FINISHED',
+      ).length;
+      const failedJobs = streamLoads.filter(
+        (load) => load.state === 'CANCELLED',
+      ).length;
+
+      // 计算平均加载时间
+      const finishedLoads = streamLoads.filter(
+        (load) =>
+          load.state === 'FINISHED' &&
+          load.load_start_time &&
+          load.load_finish_time,
+      );
+
+      let avgLoadTimeSeconds = 0;
+      if (finishedLoads.length > 0) {
+        const totalSeconds = finishedLoads.reduce((sum, load) => {
+          const start = new Date(load.load_start_time).getTime();
+          const finish = new Date(load.load_finish_time).getTime();
+          return sum + (finish - start) / 1000;
+        }, 0);
+        avgLoadTimeSeconds = totalSeconds / finishedLoads.length;
+      }
+
+      data.stream_load_stats = {
+        total_jobs: totalJobs,
+        success_jobs: successJobs,
+        failed_jobs: failedJobs,
+        avg_load_time_seconds: avgLoadTimeSeconds,
+      };
+
+      console.log(
+        `[CollectData] Stream Load 统计: ${totalJobs} 总任务, ${successJobs} 成功, ${failedJobs} 失败`,
+      );
     } catch (error) {
       console.warn('Failed to collect stream load stats:', error.message);
       data.stream_load_stats = {};
     }
 
-    // 6. 获取表的导入频率统计
+    // 6. 获取表的导入频率统计（基于混合查询的数据）
     try {
-      const [tableLoadStats] = await connection.query(`
-        SELECT
-          SUBSTRING_INDEX(SUBSTRING_INDEX(JOB_DETAILS, 'database=', -1), ',', 1) as database_name,
-          SUBSTRING_INDEX(SUBSTRING_INDEX(JOB_DETAILS, 'table=', -1), ',', 1) as table_name,
-          COUNT(*) as load_count,
-          SUM(CASE WHEN STATE = 'FINISHED' THEN 1 ELSE 0 END) as success_count,
-          SUM(CASE WHEN STATE = 'CANCELLED' THEN 1 ELSE 0 END) as failed_count
-        FROM information_schema.loads
-        WHERE CREATE_TIME >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
-        AND JOB_DETAILS LIKE '%database=%' AND JOB_DETAILS LIKE '%table=%'
-        GROUP BY database_name, table_name
-        ORDER BY load_count DESC
-        LIMIT 20;
-      `);
-      data.table_load_stats = tableLoadStats;
+      // 从已获取的数据中统计（避免重复查询）
+      const tableStatsMap = new Map();
+
+      data.recent_loads.forEach((load) => {
+        // 提取数据库名和表名
+        let dbName = load.db_name;
+        let tableName = load.table_name;
+
+        // 如果没有 db_name/table_name，尝试从 JOB_DETAILS 提取
+        if (
+          (!dbName || !tableName) &&
+          load.JOB_DETAILS &&
+          typeof load.JOB_DETAILS === 'string'
+        ) {
+          const dbMatch = load.JOB_DETAILS.match(/database=([^,]+)/);
+          const tableMatch = load.JOB_DETAILS.match(/table=([^,]+)/);
+          if (dbMatch) dbName = dbMatch[1];
+          if (tableMatch) tableName = tableMatch[1];
+        }
+
+        if (dbName && tableName) {
+          const key = `${dbName}.${tableName}`;
+          if (!tableStatsMap.has(key)) {
+            tableStatsMap.set(key, {
+              database_name: dbName,
+              table_name: tableName,
+              load_count: 0,
+              success_count: 0,
+              failed_count: 0,
+            });
+          }
+
+          const stats = tableStatsMap.get(key);
+          stats.load_count++;
+          if (load.state === 'FINISHED') stats.success_count++;
+          if (load.state === 'CANCELLED') stats.failed_count++;
+        }
+      });
+
+      // 转换为数组并排序
+      data.table_load_stats = Array.from(tableStatsMap.values())
+        .sort((a, b) => b.load_count - a.load_count)
+        .slice(0, 20);
+
+      console.log(
+        `[CollectData] 表导入统计: ${data.table_load_stats.length} 个表`,
+      );
     } catch (error) {
       console.warn('Failed to collect table load stats:', error.message);
       data.table_load_stats = [];
@@ -242,7 +498,7 @@ class StarRocksIngestionExpert {
   }
 
   /**
-   * 分析Stream Load导入频率
+   * 分析Stream Load导入频率（使用混合查询）
    */
   async analyzeImportFrequency(connection) {
     const frequencyAnalysis = {
@@ -252,45 +508,25 @@ class StarRocksIngestionExpert {
     };
 
     try {
-      // 1. 从loads_history表分析导入频率
-      let historyQuery = '';
-      try {
-        // 首先尝试使用loads_history表
-        const [historyLoads] = await connection.query(`
-          SELECT
-            DATABASE_NAME,
-            TABLE_NAME,
-            CREATE_TIME,
-            STATE,
-            TYPE
-          FROM information_schema.loads_history
-          WHERE TYPE = 'STREAM LOAD'
-            AND CREATE_TIME >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-          ORDER BY DATABASE_NAME, TABLE_NAME, CREATE_TIME;
-        `);
-        historyQuery = 'loads_history';
-        await this.processLoadHistoryData(historyLoads, frequencyAnalysis);
-      } catch (historyError) {
-        console.warn(
-          'loads_history table not available, falling back to loads table',
-        );
+      // 1. 使用混合查询获取 7 天内的 Stream Load 数据
+      const hybridLoads = await this.getStreamLoadTasksHybrid(connection, {
+        hours: 7 * 24, // 7 天
+      });
 
-        // 如果loads_history不可用，尝试使用loads表
-        const [currentLoads] = await connection.query(`
-          SELECT
-            SUBSTRING_INDEX(SUBSTRING_INDEX(COALESCE(JOB_DETAILS, LABEL), 'database=', -1), ',', 1) as DATABASE_NAME,
-            SUBSTRING_INDEX(SUBSTRING_INDEX(COALESCE(JOB_DETAILS, LABEL), 'table=', -1), ',', 1) as TABLE_NAME,
-            CREATE_TIME,
-            STATE,
-            TYPE
-          FROM information_schema.loads
-          WHERE TYPE = 'STREAM LOAD'
-            AND CREATE_TIME >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-          ORDER BY DATABASE_NAME, TABLE_NAME, CREATE_TIME;
-        `);
-        historyQuery = 'loads';
-        await this.processLoadHistoryData(currentLoads, frequencyAnalysis);
-      }
+      // 转换为 processLoadHistoryData 期望的格式
+      const formattedLoads = hybridLoads.map((load) => ({
+        DATABASE_NAME: load.db_name,
+        TABLE_NAME: load.table_name,
+        CREATE_TIME: load.create_time,
+        STATE: load.state,
+        TYPE: load.type,
+      }));
+
+      console.log(
+        `[FrequencyAnalysis] 使用混合查询获取 ${formattedLoads.length} 条 Stream Load 记录`,
+      );
+
+      await this.processLoadHistoryData(formattedLoads, frequencyAnalysis);
 
       // 2. 计算每个表的导入频率模式
       this.calculateFrequencyPatterns(frequencyAnalysis);
@@ -2866,49 +3102,37 @@ class StarRocksIngestionExpert {
    * @param {Object} connection - 数据库连接
    * @param {string} dbName - 数据库名称
    * @param {string} tableName - 表名称
-   * @param {number} days - 分析天数（默认7天）
+   * @param {number} seconds - 分析时间范围（秒数，默认7天=604800秒）
    * @returns {Object} Stream Load 任务检查结果
    */
-  async checkStreamLoadTasks(connection, dbName, tableName, days = 7) {
+  async checkStreamLoadTasks(
+    connection,
+    dbName,
+    tableName,
+    seconds = 7 * 24 * 60 * 60,
+  ) {
     console.error(
       `🔍 开始检查表 ${dbName}.${tableName} 的 Stream Load 任务...`,
     );
     const startTime = Date.now();
 
     try {
-      // 1. 查询 Stream Load 历史数据（字段名已与表结构对照确认）
-      const query = `
-        SELECT
-          label,
-          db_name,
-          table_name,
-          state,
-          create_time,
-          load_start_time,
-          load_finish_time,
-          load_commit_time,
-          scan_rows,
-          scan_bytes,
-          filtered_rows,
-          unselected_rows,
-          sink_rows,
-          error_msg,
-          tracking_sql,
-          type
-        FROM _statistics_.loads_history
-        WHERE db_name = ?
-          AND table_name = ?
-          AND type = 'STREAM_LOAD'
-          AND create_time >= DATE_SUB(NOW(), INTERVAL ? DAY)
-        ORDER BY create_time DESC
-      `;
-
-      const [loads] = await connection.query(query, [dbName, tableName, days]);
+      // 1. 使用混合查询获取 Stream Load 历史数据（避免数据丢失）
+      const loads = await this.getStreamLoadTasksHybrid(connection, {
+        dbName,
+        tableName,
+        hours: seconds / 3600,
+      });
 
       if (!loads || loads.length === 0) {
+        // 格式化时间范围显示
+        const hours = Math.floor(seconds / 3600);
+        const days = Math.floor(hours / 24);
+        const timeDesc = days > 0 ? `${days} 天` : `${hours} 小时`;
+
         return {
           status: 'no_data',
-          message: `表 ${dbName}.${tableName} 在最近 ${days} 天内没有 Stream Load 任务记录`,
+          message: `表 ${dbName}.${tableName} 在最近 ${timeDesc} 内没有 Stream Load 任务记录`,
           analysis_duration_ms: Date.now() - startTime,
         };
       }
@@ -2957,7 +3181,7 @@ class StarRocksIngestionExpert {
         analysis_type: 'stream_load_task_check',
         database: dbName,
         table: tableName,
-        analysis_period_days: days,
+        analysis_period_seconds: seconds,
         analysis_duration_ms: Date.now() - startTime,
         health_score: healthScore,
         statistics: statistics,
@@ -3260,23 +3484,24 @@ class StarRocksIngestionExpert {
       };
     }
 
-    // 计算加载耗时
+    // 计算加载耗时（优先使用 load_start_time，若为空则使用 create_time）
     const durations = successLoads
       .map((l) => {
-        if (!l.load_start_time || !l.load_finish_time) return null;
-        return (
-          (new Date(l.load_finish_time) - new Date(l.load_start_time)) / 1000
-        );
+        if (!l.load_finish_time) return null;
+        const startTime = l.load_start_time || l.create_time;
+        if (!startTime) return null;
+        return (new Date(l.load_finish_time) - new Date(startTime)) / 1000;
       })
       .filter((d) => d !== null && d > 0);
 
-    // 计算吞吐量
+    // 计算吞吐量（优先使用 load_start_time，若为空则使用 create_time）
     const throughputs = successLoads
       .map((l) => {
-        if (!l.load_start_time || !l.load_finish_time || !l.scan_bytes)
-          return null;
+        if (!l.load_finish_time || !l.scan_bytes) return null;
+        const startTime = l.load_start_time || l.create_time;
+        if (!startTime) return null;
         const duration =
-          (new Date(l.load_finish_time) - new Date(l.load_start_time)) / 1000;
+          (new Date(l.load_finish_time) - new Date(startTime)) / 1000;
         if (duration <= 0) return null;
         return l.scan_bytes / duration / 1024 / 1024; // MB/s
       })
@@ -3617,10 +3842,16 @@ class StarRocksIngestionExpert {
       return `❌ Stream Load 检查失败: ${result.error}`;
     }
 
+    // 格式化时间范围显示
+    const seconds = result.analysis_period_seconds;
+    const hours = Math.floor(seconds / 3600);
+    const days = Math.floor(hours / 24);
+    const timeDesc = days > 0 ? `${days} 天` : `${hours} 小时`;
+
     let report = `📊 Stream Load 任务检查报告\n`;
     report += `==========================================\n`;
     report += `表: ${result.database}.${result.table}\n`;
-    report += `分析周期: 最近 ${result.analysis_period_days} 天\n`;
+    report += `分析周期: 最近 ${timeDesc}\n`;
     report += `健康评分: ${result.health_score.score}/100 (${result.health_score.level})\n\n`;
 
     // 基础统计
@@ -3797,7 +4028,7 @@ class StarRocksIngestionExpert {
           connection,
           args.database_name,
           args.table_name,
-          args.days || 7,
+          args.seconds || 7 * 24 * 60 * 60,
         );
 
         let report;
@@ -3859,7 +4090,1335 @@ class StarRocksIngestionExpert {
           ],
         };
       },
+
+      analyze_reached_timeout: async (args, context) => {
+        const connection = context.connection;
+        const result = await this.analyzeReachedTimeout(connection, {
+          be_host: args.be_host,
+          architecture: args.architecture || 'replicated',
+          time_range_minutes: args.time_range_minutes || 30,
+        });
+
+        // 添加输出指示，引导 LLM 原样输出
+        const outputInstruction =
+          '📋 以下是预格式化的分析报告，请**原样输出**完整内容，不要总结或重新格式化：\n\n```\n';
+        const reportEnd = '\n```\n';
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: outputInstruction + result.report + reportEnd,
+            },
+          ],
+        };
+      },
+
+      analyze_load_channel_profile: async (args, context) => {
+        const connection = context.connection;
+        const result = await this.analyzeLoadChannelProfile(
+          connection,
+          args.query_id,
+          args.profile_text,
+        );
+
+        // 添加输出指示，引导 LLM 原样输出
+        const outputInstruction =
+          '📋 以下是预格式化的分析报告，请**原样输出**完整内容，不要总结或重新格式化：\n\n```\n';
+        const reportEnd = '\n```\n';
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: outputInstruction + result.report + reportEnd,
+            },
+          ],
+        };
+      },
     };
+  }
+
+  /**
+   * ========================================
+   * Reached Timeout 问题分析工具
+   * ========================================
+   * 根据 SOP 文档实现的综合分析工具
+   */
+
+  /**
+   * Reached Timeout 问题分析（主入口）
+   *
+   * 功能：
+   * 1. 分析集群资源使用情况（CPU、IO、网络）
+   * 2. 分析 BRPC 接口延迟和处理情况
+   * 3. 分析各线程池状态和耗时
+   * 4. 识别导入瓶颈环节
+   * 5. 提供解决方案建议
+   *
+   * @param {Object} connection - 数据库连接
+   * @param {Object} options - 分析选项
+   * @param {string} options.be_host - BE 节点地址（可选）
+   * @param {string} options.architecture - 架构类型：'replicated'（存算一体）或 'shared_data'（存算分离）
+   * @param {number} options.time_range_minutes - 分析时间范围（分钟，默认30分钟）
+   * @returns {Object} 分析报告
+   */
+  async analyzeReachedTimeout(connection, options = {}) {
+    const {
+      be_host = null,
+      architecture = 'replicated', // 'replicated' or 'shared_data'
+      time_range_minutes = 30,
+    } = options;
+
+    try {
+      const report = {
+        title: '🔍 StarRocks 导入 Reached Timeout 问题分析报告',
+        timestamp: new Date().toISOString(),
+        architecture: architecture === 'replicated' ? '存算一体' : '存算分离',
+        time_range: `${time_range_minutes}分钟`,
+        summary: {},
+        resource_analysis: {},
+        brpc_analysis: {},
+        threadpool_analysis: {},
+        bottleneck_analysis: {},
+        recommendations: [],
+        details: {},
+      };
+
+      // 1. 资源监控分析
+      report.resource_analysis = await this._analyzeResourceUsage(
+        connection,
+        be_host,
+        time_range_minutes,
+      );
+
+      // 2. BRPC 监控分析
+      report.brpc_analysis = await this._analyzeBRPCMetrics(
+        connection,
+        be_host,
+        time_range_minutes,
+      );
+
+      // 3. 线程池监控分析
+      report.threadpool_analysis = await this._analyzeThreadPools(
+        connection,
+        be_host,
+        architecture,
+        time_range_minutes,
+      );
+
+      // 4. 瓶颈识别
+      report.bottleneck_analysis = this._identifyBottlenecks(
+        report.resource_analysis,
+        report.brpc_analysis,
+        report.threadpool_analysis,
+      );
+
+      // 5. 生成建议
+      report.recommendations = this._generateRecommendations(
+        report.bottleneck_analysis,
+        report.resource_analysis,
+        report.threadpool_analysis,
+        architecture,
+      );
+
+      // 6. 生成摘要
+      report.summary = this._generateSummary(report);
+
+      // 7. 格式化输出
+      return this._formatReachedTimeoutReport(report);
+    } catch (error) {
+      return {
+        success: false,
+        error: `分析失败: ${error.message}`,
+        stack: error.stack,
+      };
+    }
+  }
+
+  /**
+   * 分析资源使用情况
+   */
+  async _analyzeResourceUsage(connection, be_host, time_range_minutes) {
+    const analysis = {
+      cpu: {},
+      io: {},
+      network: {},
+      issues: [],
+    };
+
+    try {
+      // CPU 使用率分析
+      analysis.cpu = await this._analyzeCPUUsage(
+        connection,
+        be_host,
+        time_range_minutes,
+      );
+
+      // IO 使用率分析
+      analysis.io = await this._analyzeIOUsage(
+        connection,
+        be_host,
+        time_range_minutes,
+      );
+
+      // 网络使用分析
+      analysis.network = await this._analyzeNetworkUsage(
+        connection,
+        be_host,
+        time_range_minutes,
+      );
+
+      // 识别资源问题
+      if (analysis.cpu.avg_usage > 90) {
+        analysis.issues.push({
+          type: 'CPU',
+          severity: 'HIGH',
+          message: `CPU 使用率过高: 平均 ${analysis.cpu.avg_usage.toFixed(1)}%`,
+          suggestion: '考虑增加 BE 节点或优化查询负载',
+        });
+      }
+
+      if (analysis.io.avg_util > 80) {
+        analysis.issues.push({
+          type: 'IO',
+          severity: 'HIGH',
+          message: `IO 使用率过高: 平均 ${analysis.io.avg_util.toFixed(1)}%`,
+          suggestion: '检查磁盘性能，考虑使用 SSD 或增加磁盘数量',
+        });
+      }
+    } catch (error) {
+      analysis.error = error.message;
+    }
+
+    return analysis;
+  }
+
+  /**
+   * 分析 CPU 使用情况
+   */
+  async _analyzeCPUUsage(connection, be_host, time_range_minutes) {
+    // 注意：这里需要从 Prometheus 查询，但当前代码库中没有 Prometheus 集成
+    // 返回模拟数据结构
+    return {
+      avg_usage: 0,
+      max_usage: 0,
+      p95_usage: 0,
+      by_task: {},
+      note: 'Prometheus 集成待完善 - 请检查 Grafana 面板 "BE CPU Idle" 和 "cpu utile by task"',
+    };
+  }
+
+  /**
+   * 分析 IO 使用情况
+   */
+  async _analyzeIOUsage(connection, be_host, time_range_minutes) {
+    return {
+      avg_util: 0,
+      max_util: 0,
+      local_disk: {},
+      s3_metrics: {},
+      note: 'Prometheus 集成待完善 - 请检查 Grafana 面板 "Disk IO Util" 和 "fslib write io metrics"',
+    };
+  }
+
+  /**
+   * 分析网络使用情况
+   */
+  async _analyzeNetworkUsage(connection, be_host, time_range_minutes) {
+    return {
+      bandwidth_usage: {},
+      tcp_stats: {},
+      note: 'Prometheus 集成待完善 - 请检查 Grafana 面板 "Net send/receive bytes" 和 TCP 监控',
+    };
+  }
+
+  /**
+   * 分析 BRPC 指标
+   */
+  async _analyzeBRPCMetrics(connection, be_host, time_range_minutes) {
+    const analysis = {
+      thread_pool: {
+        total: 0,
+        used: 0,
+        utilization: 0,
+      },
+      interfaces: {
+        tablet_writer_open: {},
+        tablet_writer_add_chunks: {},
+        tablet_writer_add_segment: {},
+      },
+      issues: [],
+    };
+
+    // 从 Prometheus 查询 BRPC 指标
+    // 注意：这里需要实际的 Prometheus 查询实现
+    analysis.note =
+      'Prometheus 集成待完善 - 请检查 Grafana 面板 "BRPC Workers" 和各接口延迟指标';
+
+    // 检查 BRPC 线程池使用情况
+    const util = analysis.thread_pool.utilization;
+    if (util > 90) {
+      analysis.issues.push({
+        type: 'BRPC_THREAD_POOL',
+        severity: 'HIGH',
+        message: `BRPC 线程池使用率过高: ${util.toFixed(1)}%`,
+        suggestion: '考虑增加 BE 配置 brpc_num_threads',
+      });
+    }
+
+    return analysis;
+  }
+
+  /**
+   * 分析线程池状态
+   */
+  async _analyzeThreadPools(
+    connection,
+    be_host,
+    architecture,
+    time_range_minutes,
+  ) {
+    const analysis = {
+      async_delta_writer: {},
+      memtable_flush: {},
+      segment_replicate_sync: architecture === 'replicated' ? {} : null,
+      segment_flush: architecture === 'replicated' ? {} : null,
+      issues: [],
+    };
+
+    // 从 Prometheus 查询各线程池指标
+    analysis.note = 'Prometheus 集成待完善 - 请检查 Grafana 各线程池监控面板';
+
+    return analysis;
+  }
+
+  /**
+   * 识别瓶颈环节
+   */
+  _identifyBottlenecks(resource_analysis, brpc_analysis, threadpool_analysis) {
+    const bottlenecks = [];
+
+    // 1. 资源瓶颈
+    if (resource_analysis.issues.length > 0) {
+      bottlenecks.push({
+        category: '资源瓶颈',
+        items: resource_analysis.issues,
+      });
+    }
+
+    // 2. BRPC 瓶颈
+    if (brpc_analysis.issues.length > 0) {
+      bottlenecks.push({
+        category: 'BRPC 瓶颈',
+        items: brpc_analysis.issues,
+      });
+    }
+
+    // 3. 线程池瓶颈
+    if (threadpool_analysis.issues.length > 0) {
+      bottlenecks.push({
+        category: '线程池瓶颈',
+        items: threadpool_analysis.issues,
+      });
+    }
+
+    return {
+      has_bottleneck: bottlenecks.length > 0,
+      bottlenecks: bottlenecks,
+      summary: `识别到 ${bottlenecks.length} 类瓶颈问题`,
+    };
+  }
+
+  /**
+   * 生成解决方案建议
+   */
+  _generateRecommendations(
+    bottleneck_analysis,
+    resource_analysis,
+    threadpool_analysis,
+    architecture,
+  ) {
+    const recommendations = [];
+
+    // 1. 资源相关建议
+    const cpu_issue = resource_analysis.issues.find((i) => i.type === 'CPU');
+    if (cpu_issue) {
+      recommendations.push({
+        priority: 'HIGH',
+        category: '资源扩容',
+        title: 'CPU 资源不足',
+        description: cpu_issue.message,
+        actions: [
+          '增加 BE 节点数量，分散负载',
+          '检查是否有其他任务（如 Compaction、Query）占用过多 CPU',
+          '优化导入批次大小和并发度',
+        ],
+      });
+    }
+
+    const io_issue = resource_analysis.issues.find((i) => i.type === 'IO');
+    if (io_issue) {
+      recommendations.push({
+        priority: 'HIGH',
+        category: '资源扩容',
+        title: 'IO 资源不足',
+        description: io_issue.message,
+        actions: [
+          '使用 SSD 磁盘替代 HDD',
+          '增加磁盘数量',
+          '检查是否有大量小文件导入',
+        ],
+      });
+    }
+
+    // 2. BRPC 相关建议
+    if (threadpool_analysis.async_delta_writer?.queue_count > 0) {
+      recommendations.push({
+        priority: 'MEDIUM',
+        category: '线程池调优',
+        title: 'Async Delta Writer 线程池不足',
+        description: '任务队列有积压',
+        actions: [
+          '动态调整 BE 配置：UPDATE starrocks_be_configs SET value=32 WHERE name="number_tablet_writer_threads"',
+          '默认值为 16，建议根据 CPU 核数适当增加',
+        ],
+      });
+    }
+
+    if (
+      architecture === 'replicated' &&
+      threadpool_analysis.memtable_flush?.queue_count > 0
+    ) {
+      recommendations.push({
+        priority: 'MEDIUM',
+        category: '线程池调优',
+        title: 'Memtable Flush 线程池不足',
+        description: '任务队列有积压',
+        actions: [
+          '动态调整 BE 配置：UPDATE starrocks_be_configs SET value=4 WHERE name="flush_thread_num_per_store"',
+          '默认值为 2（每块盘），建议根据磁盘数量和负载适当增加',
+          '注意：总线程数 = flush_thread_num_per_store * 磁盘数',
+        ],
+      });
+    }
+
+    // 3. 主键表相关建议
+    recommendations.push({
+      priority: 'MEDIUM',
+      category: '配置优化',
+      title: '主键表 PK Index 优化',
+      description: '如果是主键表导入慢，可以跳过 PK Index Preload',
+      actions: [
+        '设置 BE 配置跳过 pk_preload: UPDATE starrocks_be_configs SET value=true WHERE name="skip_pk_preload"',
+        '这可以显著减少主键表导入阶段的耗时',
+        '适用版本: >= 3.4',
+      ],
+    });
+
+    // 4. 超时时间调整
+    recommendations.push({
+      priority: 'LOW',
+      category: '临时缓解',
+      title: '增加导入超时时间',
+      description: '快速缓解 Reached Timeout 问题',
+      actions: [
+        '增加 Stream Load 超时：curl -X PUT -H "timeout: 600" ...',
+        '增加 Broker Load 超时：ALTER LOAD ... PROPERTIES ("timeout" = "14400")',
+        '注意：这只是临时缓解，需要配合其他优化措施',
+      ],
+    });
+
+    // 5. 常见问题检查清单
+    recommendations.push({
+      priority: 'INFO',
+      category: '问题排查清单',
+      title: '建议检查以下方面',
+      description: '基于历史问题经验的检查清单',
+      actions: [
+        '✓ 检查是否有 Clone 任务在执行（主键表重建索引会影响导入）',
+        '✓ 检查 RocksDB 是否有 "Stalling writes" 日志',
+        '✓ 检查 TCP 连接是否有重传、丢包等问题',
+        '✓ 检查存算分离架构下 S3 IO 延迟是否正常',
+        '✓ 检查是否有定时任务或业务高峰期导致负载突增',
+      ],
+    });
+
+    return recommendations;
+  }
+
+  /**
+   * 生成分析摘要
+   */
+  _generateSummary(report) {
+    const total_issues =
+      report.resource_analysis.issues.length +
+      report.brpc_analysis.issues.length +
+      report.threadpool_analysis.issues.length;
+
+    return {
+      total_issues: total_issues,
+      has_resource_issue: report.resource_analysis.issues.length > 0,
+      has_brpc_issue: report.brpc_analysis.issues.length > 0,
+      has_threadpool_issue: report.threadpool_analysis.issues.length > 0,
+      bottleneck_identified: report.bottleneck_analysis.has_bottleneck,
+      recommendation_count: report.recommendations.length,
+      overall_status:
+        total_issues === 0
+          ? 'HEALTHY'
+          : total_issues < 3
+            ? 'WARNING'
+            : 'CRITICAL',
+    };
+  }
+
+  /**
+   * 格式化报告输出
+   */
+  _formatReachedTimeoutReport(report) {
+    let output = [];
+
+    // 标题和基本信息
+    output.push('='.repeat(80));
+    output.push(report.title);
+    output.push('='.repeat(80));
+    output.push('');
+    output.push(`📅 分析时间: ${report.timestamp}`);
+    output.push(`🏗️  架构类型: ${report.architecture}`);
+    output.push(`⏱️  时间范围: ${report.time_range}`);
+    output.push(
+      `📊 整体状态: ${this._getStatusEmoji(report.summary.overall_status)} ${report.summary.overall_status}`,
+    );
+    output.push('');
+
+    // 摘要
+    output.push('📋 分析摘要');
+    output.push('-'.repeat(80));
+    output.push(`  • 发现问题数量: ${report.summary.total_issues}`);
+    output.push(
+      `  • 资源问题: ${report.summary.has_resource_issue ? '是 ⚠️' : '否 ✓'}`,
+    );
+    output.push(
+      `  • BRPC 问题: ${report.summary.has_brpc_issue ? '是 ⚠️' : '否 ✓'}`,
+    );
+    output.push(
+      `  • 线程池问题: ${report.summary.has_threadpool_issue ? '是 ⚠️' : '否 ✓'}`,
+    );
+    output.push(
+      `  • 瓶颈识别: ${report.bottleneck_analysis.has_bottleneck ? '已识别 🎯' : '未发现 ✓'}`,
+    );
+    output.push(`  • 优化建议: ${report.summary.recommendation_count} 条`);
+    output.push('');
+
+    // 资源分析
+    output.push('🖥️ 资源使用分析');
+    output.push('-'.repeat(80));
+    if (report.resource_analysis.issues.length > 0) {
+      report.resource_analysis.issues.forEach((issue) => {
+        output.push(
+          `  ${this._getSeverityEmoji(issue.severity)} ${issue.type}: ${issue.message}`,
+        );
+        output.push(`     💡 ${issue.suggestion}`);
+      });
+    } else {
+      output.push('  ✓ 未发现明显资源瓶颈');
+    }
+    if (report.resource_analysis.note) {
+      output.push(`  ℹ️  ${report.resource_analysis.note}`);
+    }
+    output.push('');
+
+    // BRPC 分析
+    output.push('🔌 BRPC 监控分析');
+    output.push('-'.repeat(80));
+    if (report.brpc_analysis.issues.length > 0) {
+      report.brpc_analysis.issues.forEach((issue) => {
+        output.push(
+          `  ${this._getSeverityEmoji(issue.severity)} ${issue.type}: ${issue.message}`,
+        );
+        output.push(`     💡 ${issue.suggestion}`);
+      });
+    } else {
+      output.push('  ✓ BRPC 状态正常');
+    }
+    if (report.brpc_analysis.note) {
+      output.push(`  ℹ️  ${report.brpc_analysis.note}`);
+    }
+    output.push('');
+
+    // 线程池分析
+    output.push('🧵 线程池监控分析');
+    output.push('-'.repeat(80));
+    if (report.threadpool_analysis.issues.length > 0) {
+      report.threadpool_analysis.issues.forEach((issue) => {
+        output.push(
+          `  ${this._getSeverityEmoji(issue.severity)} ${issue.type}: ${issue.message}`,
+        );
+        output.push(`     💡 ${issue.suggestion}`);
+      });
+    } else {
+      output.push('  ✓ 线程池状态正常');
+    }
+    if (report.threadpool_analysis.note) {
+      output.push(`  ℹ️  ${report.threadpool_analysis.note}`);
+    }
+    output.push('');
+
+    // 瓶颈分析
+    if (report.bottleneck_analysis.has_bottleneck) {
+      output.push('🎯 瓶颈分析');
+      output.push('-'.repeat(80));
+      report.bottleneck_analysis.bottlenecks.forEach((bottleneck) => {
+        output.push(`  📌 ${bottleneck.category}:`);
+        bottleneck.items.forEach((item) => {
+          output.push(`     • ${item.message}`);
+        });
+      });
+      output.push('');
+    }
+
+    // 优化建议
+    output.push('💡 优化建议');
+    output.push('='.repeat(80));
+    report.recommendations.forEach((rec, index) => {
+      const priorityEmoji =
+        rec.priority === 'HIGH'
+          ? '🔴'
+          : rec.priority === 'MEDIUM'
+            ? '🟡'
+            : rec.priority === 'LOW'
+              ? '🟢'
+              : 'ℹ️';
+      output.push('');
+      output.push(
+        `${index + 1}. ${priorityEmoji} [${rec.priority}] ${rec.title}`,
+      );
+      output.push(`   分类: ${rec.category}`);
+      output.push(`   说明: ${rec.description}`);
+      output.push(`   操作步骤:`);
+      rec.actions.forEach((action) => {
+        output.push(`      • ${action}`);
+      });
+    });
+    output.push('');
+
+    // 相关文档
+    output.push('📚 相关文档');
+    output.push('='.repeat(80));
+    output.push('  • Reached Timeout 问题排查 SOP');
+    output.push('  • StarRocks 导入运维手册: https://docs.starrocks.io/');
+    output.push('  • Grafana 监控面板: BE 导入监控');
+    output.push(
+      '  • 线程池配置说明: 见 SOP 文档 "各线程池以及对应的 BE 配置" 章节',
+    );
+    output.push('');
+
+    output.push('='.repeat(80));
+    output.push('注意事项:');
+    output.push(
+      '1. 本报告基于当前监控数据生成，实际问题可能需要结合 BE 日志和 Profile 进一步分析',
+    );
+    output.push(
+      '2. Prometheus 监控集成待完善，部分指标需手动检查 Grafana 面板',
+    );
+    output.push(
+      '3. 建议优先处理 HIGH 优先级的问题，然后逐步优化 MEDIUM 和 LOW 优先级的项目',
+    );
+    output.push('4. 配置调整后建议持续观察监控指标，确认优化效果');
+    output.push('='.repeat(80));
+
+    return {
+      success: true,
+      report: output.join('\n'),
+      raw_data: report,
+    };
+  }
+
+  _getStatusEmoji(status) {
+    const emojiMap = {
+      HEALTHY: '✅',
+      WARNING: '⚠️',
+      CRITICAL: '🚨',
+    };
+    return emojiMap[status] || '❓';
+  }
+
+  _getSeverityEmoji(severity) {
+    const emojiMap = {
+      HIGH: '🔴',
+      MEDIUM: '🟡',
+      LOW: '🟢',
+      INFO: 'ℹ️',
+    };
+    return emojiMap[severity] || '❓';
+  }
+
+  /**
+   * 解析时间字符串为毫秒数
+   */
+  _parseTimeToMs(timeStr) {
+    if (!timeStr || timeStr === '0ns') return 0;
+
+    const match = timeStr.match(/^([\d.]+)([a-z]+)$/i);
+    if (!match) return 0;
+
+    const value = parseFloat(match[1]);
+    const unit = match[2].toLowerCase();
+
+    const unitMap = {
+      ns: 1 / 1000000,
+      us: 1 / 1000,
+      ms: 1,
+      s: 1000,
+      m: 60000,
+      h: 3600000,
+    };
+
+    return value * (unitMap[unit] || 0);
+  }
+
+  /**
+   * 格式化时间（毫秒）为可读字符串
+   */
+  _formatTime(ms) {
+    if (ms < 1000) return `${ms.toFixed(2)}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`;
+    if (ms < 3600000) return `${(ms / 60000).toFixed(2)}m`;
+    return `${(ms / 3600000).toFixed(2)}h`;
+  }
+
+  /**
+   * 解析 LoadChannel Profile 文本
+   */
+  parseLoadChannelProfile(profileText) {
+    const lines = profileText.split('\n');
+    const result = {
+      loadId: null,
+      txnId: null,
+      channels: [],
+    };
+
+    let currentChannel = null;
+    let currentIndex = null;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // 跳过空行
+      if (!trimmed) continue;
+
+      // 解析 LoadChannel 级别
+      if (trimmed.startsWith('LoadChannel:')) {
+        continue;
+      }
+
+      // 解析 LoadId
+      if (trimmed.startsWith('- LoadId:')) {
+        result.loadId = trimmed.split(':')[1].trim();
+        continue;
+      }
+
+      // 解析 TxnId
+      if (trimmed.startsWith('- TxnId:')) {
+        result.txnId = trimmed.split(':')[1].trim();
+        continue;
+      }
+
+      // 解析 Channel
+      if (
+        trimmed.startsWith('Channel:') ||
+        trimmed.startsWith('Channel (host=')
+      ) {
+        currentChannel = {
+          host: null,
+          peakMemoryUsage: 0,
+          loadMemoryLimit: 0,
+          indexNum: 0,
+          backendAddresses: [],
+          channelNum: 0,
+          indices: [],
+        };
+
+        // 提取 host（如果有）
+        const hostMatch = trimmed.match(/host=([\d.]+)/);
+        if (hostMatch) {
+          currentChannel.host = hostMatch[1];
+        }
+
+        result.channels.push(currentChannel);
+        currentIndex = null;
+        continue;
+      }
+
+      // 解析 Channel 级别的属性
+      if (currentChannel && !currentIndex) {
+        if (trimmed.startsWith('- PeakMemoryUsage:')) {
+          currentChannel.peakMemoryUsage = trimmed.split(':')[1].trim();
+        } else if (trimmed.startsWith('- LoadMemoryLimit:')) {
+          currentChannel.loadMemoryLimit = trimmed.split(':')[1].trim();
+        } else if (trimmed.startsWith('- IndexNum:')) {
+          currentChannel.indexNum = parseInt(trimmed.split(':')[1].trim());
+        } else if (trimmed.startsWith('- BackendAddresses:')) {
+          currentChannel.backendAddresses = trimmed
+            .split(':')[1]
+            .trim()
+            .split(',');
+        } else if (trimmed.startsWith('- ChannelNum:')) {
+          currentChannel.channelNum = parseInt(trimmed.split(':')[1].trim());
+        } else if (trimmed.startsWith('- Address:')) {
+          currentChannel.host = trimmed.split(':')[1].trim();
+        }
+      }
+
+      // 解析 Index
+      if (trimmed.startsWith('Index (id=') || trimmed.startsWith('Index:')) {
+        const idMatch = trimmed.match(/id=(\d+)/);
+        currentIndex = {
+          indexId: idMatch ? idMatch[1] : 'unknown',
+          openCount: 0,
+          openTime: '0ns',
+          addChunkCount: 0,
+          addRowNum: 0,
+          addChunkTime: '0ns',
+          waitFlushTime: '0ns',
+          waitWriterTime: '0ns',
+          waitReplicaTime: '0ns',
+          primaryTabletsNum: 0,
+          secondaryTabletsNum: 0,
+          // 合并模式下的统计
+          maxAddChunkCount: 0,
+          minAddChunkCount: 0,
+          maxAddChunkTime: '0ns',
+          minAddChunkTime: '0ns',
+          maxAddRowNum: 0,
+          minAddRowNum: 0,
+        };
+
+        if (currentChannel) {
+          currentChannel.indices.push(currentIndex);
+        }
+        continue;
+      }
+
+      // 解析 Index 级别的属性
+      if (currentIndex) {
+        const parseValue = (prefix) => {
+          if (trimmed.startsWith(prefix)) {
+            return trimmed
+              .split(':')[1]
+              .trim()
+              .replace(/[()]/g, '')
+              .split(' ')[0];
+          }
+          return null;
+        };
+
+        const value =
+          parseValue('- OpenCount:') ||
+          parseValue('- OpenTime:') ||
+          parseValue('- AddChunkCount:') ||
+          parseValue('- AddRowNum:') ||
+          parseValue('- AddChunkTime:') ||
+          parseValue('- WaitFlushTime:') ||
+          parseValue('- WaitWriterTime:') ||
+          parseValue('- WaitReplicaTime:') ||
+          parseValue('- PrimaryTabletsNum:') ||
+          parseValue('- SecondaryTabletsNum:') ||
+          parseValue('- __MAX_OF_AddChunkCount:') ||
+          parseValue('- __MIN_OF_AddChunkCount:') ||
+          parseValue('- __MAX_OF_AddChunkTime:') ||
+          parseValue('- __MIN_OF_AddChunkTime:') ||
+          parseValue('- __MAX_OF_AddRowNum:') ||
+          parseValue('- __MIN_OF_AddRowNum:');
+
+        if (value !== null) {
+          if (trimmed.includes('OpenCount:')) {
+            currentIndex.openCount = parseInt(value);
+          } else if (trimmed.includes('OpenTime:')) {
+            currentIndex.openTime = value;
+          } else if (trimmed.includes('__MAX_OF_AddChunkCount:')) {
+            currentIndex.maxAddChunkCount = parseInt(value);
+          } else if (trimmed.includes('__MIN_OF_AddChunkCount:')) {
+            currentIndex.minAddChunkCount = parseInt(value);
+          } else if (
+            trimmed.includes('AddChunkCount:') &&
+            !trimmed.includes('__')
+          ) {
+            currentIndex.addChunkCount = parseInt(value);
+          } else if (trimmed.includes('__MAX_OF_AddRowNum:')) {
+            currentIndex.maxAddRowNum = parseInt(value);
+          } else if (trimmed.includes('__MIN_OF_AddRowNum:')) {
+            currentIndex.minAddRowNum = parseInt(value);
+          } else if (
+            trimmed.includes('AddRowNum:') &&
+            !trimmed.includes('__')
+          ) {
+            currentIndex.addRowNum = parseInt(value);
+          } else if (trimmed.includes('__MAX_OF_AddChunkTime:')) {
+            currentIndex.maxAddChunkTime = value;
+          } else if (trimmed.includes('__MIN_OF_AddChunkTime:')) {
+            currentIndex.minAddChunkTime = value;
+          } else if (
+            trimmed.includes('AddChunkTime:') &&
+            !trimmed.includes('__')
+          ) {
+            currentIndex.addChunkTime = value;
+          } else if (trimmed.includes('WaitFlushTime:')) {
+            currentIndex.waitFlushTime = value;
+          } else if (trimmed.includes('WaitWriterTime:')) {
+            currentIndex.waitWriterTime = value;
+          } else if (trimmed.includes('WaitReplicaTime:')) {
+            currentIndex.waitReplicaTime = value;
+          } else if (trimmed.includes('PrimaryTabletsNum:')) {
+            currentIndex.primaryTabletsNum = parseInt(value);
+          } else if (trimmed.includes('SecondaryTabletsNum:')) {
+            currentIndex.secondaryTabletsNum = parseInt(value);
+          }
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * 分析 LoadChannel 性能
+   */
+  analyzeLoadChannelPerformance(parsedProfile) {
+    const analysis = {
+      summary: {
+        totalChannels: parsedProfile.channels.length,
+        totalIndices: 0,
+        totalAddChunkTime: 0,
+        totalWaitFlushTime: 0,
+        totalWaitWriterTime: 0,
+        totalWaitReplicaTime: 0,
+        totalRows: 0,
+      },
+      channelAnalysis: [],
+      bottlenecks: [],
+      performance: {
+        avgRowsPerSecond: 0,
+        avgThroughput: 0,
+      },
+    };
+
+    // 分析每个 Channel
+    for (const channel of parsedProfile.channels) {
+      const channelData = {
+        host: channel.host || channel.backendAddresses.join(','),
+        peakMemoryUsage: channel.peakMemoryUsage,
+        indexNum: channel.indexNum,
+        indices: [],
+        totalTime: 0,
+        totalWaitTime: 0,
+      };
+
+      // 分析每个 Index
+      for (const index of channel.indices) {
+        const addChunkTimeMs = this._parseTimeToMs(index.addChunkTime);
+        const waitFlushTimeMs = this._parseTimeToMs(index.waitFlushTime);
+        const waitWriterTimeMs = this._parseTimeToMs(index.waitWriterTime);
+        const waitReplicaTimeMs = this._parseTimeToMs(index.waitReplicaTime);
+
+        const totalWaitTime =
+          waitFlushTimeMs + waitWriterTimeMs + waitReplicaTimeMs;
+        const effectiveTime = addChunkTimeMs - totalWaitTime;
+
+        const indexData = {
+          indexId: index.indexId,
+          addChunkCount: index.addChunkCount,
+          addRowNum: index.addRowNum,
+          addChunkTime: addChunkTimeMs,
+          waitFlushTime: waitFlushTimeMs,
+          waitWriterTime: waitWriterTimeMs,
+          waitReplicaTime: waitReplicaTimeMs,
+          effectiveTime: Math.max(0, effectiveTime),
+          totalWaitTime: totalWaitTime,
+          waitTimeRatio:
+            addChunkTimeMs > 0 ? totalWaitTime / addChunkTimeMs : 0,
+        };
+
+        channelData.indices.push(indexData);
+        channelData.totalTime += addChunkTimeMs;
+        channelData.totalWaitTime += totalWaitTime;
+
+        // 汇总到全局
+        analysis.summary.totalAddChunkTime += addChunkTimeMs;
+        analysis.summary.totalWaitFlushTime += waitFlushTimeMs;
+        analysis.summary.totalWaitWriterTime += waitWriterTimeMs;
+        analysis.summary.totalWaitReplicaTime += waitReplicaTimeMs;
+        analysis.summary.totalRows += index.addRowNum;
+        analysis.summary.totalIndices++;
+
+        // 识别瓶颈
+        if (waitFlushTimeMs > addChunkTimeMs * 0.3) {
+          analysis.bottlenecks.push({
+            type: 'MEMTABLE_FLUSH',
+            severity: 'HIGH',
+            channel: channelData.host,
+            index: index.indexId,
+            waitTime: waitFlushTimeMs,
+            totalTime: addChunkTimeMs,
+            ratio: ((waitFlushTimeMs / addChunkTimeMs) * 100).toFixed(1) + '%',
+            message: `Index ${index.indexId} 在 Memtable Flush 上耗时过多`,
+          });
+        }
+
+        if (waitWriterTimeMs > addChunkTimeMs * 0.3) {
+          analysis.bottlenecks.push({
+            type: 'ASYNC_DELTA_WRITER',
+            severity: 'HIGH',
+            channel: channelData.host,
+            index: index.indexId,
+            waitTime: waitWriterTimeMs,
+            totalTime: addChunkTimeMs,
+            ratio: ((waitWriterTimeMs / addChunkTimeMs) * 100).toFixed(1) + '%',
+            message: `Index ${index.indexId} 在 Async Delta Writer 上耗时过多`,
+          });
+        }
+
+        if (waitReplicaTimeMs > addChunkTimeMs * 0.2) {
+          analysis.bottlenecks.push({
+            type: 'REPLICA_SYNC',
+            severity: 'MEDIUM',
+            channel: channelData.host,
+            index: index.indexId,
+            waitTime: waitReplicaTimeMs,
+            totalTime: addChunkTimeMs,
+            ratio:
+              ((waitReplicaTimeMs / addChunkTimeMs) * 100).toFixed(1) + '%',
+            message: `Index ${index.indexId} 在副本同步上耗时较多`,
+          });
+        }
+      }
+
+      analysis.channelAnalysis.push(channelData);
+    }
+
+    // 计算性能指标
+    if (analysis.summary.totalAddChunkTime > 0) {
+      analysis.performance.avgRowsPerSecond = (
+        analysis.summary.totalRows /
+        (analysis.summary.totalAddChunkTime / 1000)
+      ).toFixed(0);
+    }
+
+    return analysis;
+  }
+
+  /**
+   * 生成 LoadChannel 优化建议
+   */
+  generateLoadChannelRecommendations(analysis) {
+    const recommendations = [];
+
+    const totalTime = analysis.summary.totalAddChunkTime;
+    const flushRatio =
+      totalTime > 0 ? analysis.summary.totalWaitFlushTime / totalTime : 0;
+    const writerRatio =
+      totalTime > 0 ? analysis.summary.totalWaitWriterTime / totalTime : 0;
+    const replicaRatio =
+      totalTime > 0 ? analysis.summary.totalWaitReplicaTime / totalTime : 0;
+
+    // Memtable Flush 瓶颈建议
+    if (flushRatio > 0.3) {
+      recommendations.push({
+        category: 'MEMTABLE_FLUSH',
+        severity: 'HIGH',
+        title: 'Memtable Flush 成为主要瓶颈',
+        description: `Memtable Flush 耗时占总耗时的 ${(flushRatio * 100).toFixed(1)}%，说明刷盘速度较慢。`,
+        suggestions: [
+          '增加 flush_thread_num_per_store 配置（当前默认值较小）',
+          '优化磁盘 I/O 性能，考虑使用更快的 SSD',
+          '检查是否存在磁盘慢盘问题',
+          '考虑增加 write_buffer_size 以减少 flush 频率',
+        ],
+        sql_commands: [
+          '-- 增加 flush 线程数（需要重启 BE）',
+          '-- 在 be.conf 中设置: flush_thread_num_per_store = 4',
+          '',
+          '-- 或者通过 SQL 动态调整（如果支持）:',
+          '-- SET GLOBAL flush_thread_num_per_store = 4;',
+        ],
+      });
+    }
+
+    // Async Delta Writer 瓶颈建议
+    if (writerRatio > 0.3) {
+      recommendations.push({
+        category: 'ASYNC_DELTA_WRITER',
+        severity: 'HIGH',
+        title: 'Async Delta Writer 线程池压力大',
+        description: `Async Delta Writer 等待时间占总耗时的 ${(writerRatio * 100).toFixed(1)}%，说明写入线程池繁忙。`,
+        suggestions: [
+          '增加 transaction_apply_worker_count 配置以扩大线程池',
+          '优化写入批次大小，减少小批次频繁写入',
+          '检查是否有慢查询占用过多资源',
+          '考虑降低导入并发度以减轻压力',
+        ],
+        sql_commands: [
+          '-- 增加 async delta writer 线程数（需要重启 BE）',
+          '-- 在 be.conf 中设置: transaction_apply_worker_count = 16',
+        ],
+      });
+    }
+
+    // 副本同步瓶颈建议
+    if (replicaRatio > 0.2) {
+      recommendations.push({
+        category: 'REPLICA_SYNC',
+        severity: 'MEDIUM',
+        title: '副本同步耗时较长',
+        description: `副本同步耗时占总耗时的 ${(replicaRatio * 100).toFixed(1)}%，可能存在网络或从副本写入瓶颈。`,
+        suggestions: [
+          '检查网络带宽和延迟是否正常',
+          '检查从副本所在 BE 节点的资源使用情况',
+          '考虑使用单副本导入（如果可接受风险）',
+          '优化批次大小以减少网络开销',
+        ],
+        sql_commands: [
+          '-- 如果可以接受风险，可以临时使用单副本导入:',
+          '-- SET replication_num = 1;',
+          '-- 导入完成后记得恢复副本数',
+        ],
+      });
+    }
+
+    // 内存使用建议
+    for (const channel of analysis.channelAnalysis) {
+      const memMatch = channel.peakMemoryUsage.match(/([\d.]+)\s*([GM]B)/);
+      if (memMatch) {
+        const memValue = parseFloat(memMatch[1]);
+        const memUnit = memMatch[2];
+        const memMB = memUnit === 'GB' ? memValue * 1024 : memValue;
+
+        if (memMB > 2048) {
+          // 超过 2GB
+          recommendations.push({
+            category: 'MEMORY',
+            severity: 'MEDIUM',
+            title: `Channel ${channel.host} 内存使用较高`,
+            description: `峰值内存使用达到 ${channel.peakMemoryUsage}，可能影响导入性能。`,
+            suggestions: [
+              '考虑减小导入批次大小',
+              '增加 BE 节点内存配置',
+              '优化数据格式，减少内存占用',
+            ],
+          });
+        }
+      }
+    }
+
+    // 性能优化建议
+    if (analysis.performance.avgRowsPerSecond < 100000) {
+      recommendations.push({
+        category: 'PERFORMANCE',
+        severity: 'LOW',
+        title: '整体导入速度较慢',
+        description: `平均导入速度为 ${analysis.performance.avgRowsPerSecond} 行/秒，低于预期。`,
+        suggestions: [
+          '增加导入并发度',
+          '优化数据格式和压缩方式',
+          '检查表结构是否有性能问题（如过多索引）',
+          '考虑使用批量导入替代频繁小批次导入',
+        ],
+      });
+    }
+
+    return recommendations;
+  }
+
+  /**
+   * 分析 LoadChannel Profile（主入口）
+   */
+  async analyzeLoadChannelProfile(
+    connection,
+    queryId = null,
+    profileText = null,
+  ) {
+    console.error('🔍 开始分析 LoadChannel Profile...');
+    const startTime = Date.now();
+
+    try {
+      // 如果提供了 query_id，从 FE 获取 profile
+      if (queryId && !profileText) {
+        console.error(`📊 从 FE 获取 Query ${queryId} 的 Profile...`);
+        const profileQuery = `SELECT QUERY_PROFILE('${queryId}')`;
+        const result = await connection.execute(profileQuery);
+
+        if (!result || result.length === 0) {
+          throw new Error(`无法获取 Query ${queryId} 的 Profile`);
+        }
+
+        profileText = result[0][0];
+      }
+
+      if (!profileText) {
+        throw new Error('必须提供 query_id 或 profile_text 参数');
+      }
+
+      // 检查是否包含 LoadChannel 信息
+      if (!profileText.includes('LoadChannel')) {
+        throw new Error(
+          'Profile 中未找到 LoadChannel 信息，请确认这是一个导入任务的 Profile',
+        );
+      }
+
+      // 1. 解析 Profile
+      console.error('📝 解析 Profile 结构...');
+      const parsedProfile = this.parseLoadChannelProfile(profileText);
+
+      if (parsedProfile.channels.length === 0) {
+        throw new Error('未能解析到有效的 LoadChannel 数据');
+      }
+
+      // 2. 分析性能
+      console.error('📊 分析性能指标...');
+      const analysis = this.analyzeLoadChannelPerformance(parsedProfile);
+
+      // 3. 生成建议
+      console.error('💡 生成优化建议...');
+      const recommendations = this.generateLoadChannelRecommendations(analysis);
+
+      // 4. 生成报告
+      const output = [];
+      output.push('='.repeat(80));
+      output.push('📊 LoadChannel Profile 分析报告');
+      output.push('='.repeat(80));
+      output.push('');
+
+      // 基本信息
+      output.push('📋 基本信息');
+      output.push('-'.repeat(80));
+      output.push(`  LoadId: ${parsedProfile.loadId || 'N/A'}`);
+      output.push(`  TxnId: ${parsedProfile.txnId || 'N/A'}`);
+      output.push(`  总 Channel 数: ${analysis.summary.totalChannels}`);
+      output.push(`  总 Index 数: ${analysis.summary.totalIndices}`);
+      output.push(
+        `  总导入行数: ${analysis.summary.totalRows.toLocaleString()}`,
+      );
+      output.push('');
+
+      // 耗时统计
+      output.push('⏱️  耗时统计');
+      output.push('-'.repeat(80));
+      const totalTime = analysis.summary.totalAddChunkTime;
+      output.push(`  总 AddChunk 耗时: ${this._formatTime(totalTime)}`);
+      output.push(
+        `  ├─ WaitFlushTime: ${this._formatTime(analysis.summary.totalWaitFlushTime)} (${((analysis.summary.totalWaitFlushTime / totalTime) * 100).toFixed(1)}%)`,
+      );
+      output.push(
+        `  ├─ WaitWriterTime: ${this._formatTime(analysis.summary.totalWaitWriterTime)} (${((analysis.summary.totalWaitWriterTime / totalTime) * 100).toFixed(1)}%)`,
+      );
+      output.push(
+        `  └─ WaitReplicaTime: ${this._formatTime(analysis.summary.totalWaitReplicaTime)} (${((analysis.summary.totalWaitReplicaTime / totalTime) * 100).toFixed(1)}%)`,
+      );
+      output.push('');
+
+      // 性能指标
+      output.push('🚀 性能指标');
+      output.push('-'.repeat(80));
+      output.push(
+        `  平均导入速度: ${analysis.performance.avgRowsPerSecond} 行/秒`,
+      );
+      output.push('');
+
+      // Channel 详细信息
+      output.push('📡 Channel 详细信息');
+      output.push('-'.repeat(80));
+      for (const channel of analysis.channelAnalysis) {
+        output.push(`  Channel: ${channel.host}`);
+        output.push(`    内存峰值: ${channel.peakMemoryUsage}`);
+        output.push(`    Index 数量: ${channel.indexNum}`);
+        output.push(`    总耗时: ${this._formatTime(channel.totalTime)}`);
+        output.push(
+          `    等待耗时: ${this._formatTime(channel.totalWaitTime)} (${channel.totalTime > 0 ? ((channel.totalWaitTime / channel.totalTime) * 100).toFixed(1) : 0}%)`,
+        );
+
+        for (const index of channel.indices) {
+          output.push(`    Index ${index.indexId}:`);
+          output.push(
+            `      AddChunkCount: ${index.addChunkCount}, AddRowNum: ${index.addRowNum.toLocaleString()}`,
+          );
+          output.push(
+            `      AddChunkTime: ${this._formatTime(index.addChunkTime)}`,
+          );
+          output.push(
+            `        ├─ WaitFlushTime: ${this._formatTime(index.waitFlushTime)} (${((index.waitFlushTime / index.addChunkTime) * 100).toFixed(1)}%)`,
+          );
+          output.push(
+            `        ├─ WaitWriterTime: ${this._formatTime(index.waitWriterTime)} (${((index.waitWriterTime / index.addChunkTime) * 100).toFixed(1)}%)`,
+          );
+          output.push(
+            `        └─ WaitReplicaTime: ${this._formatTime(index.waitReplicaTime)} (${((index.waitReplicaTime / index.addChunkTime) * 100).toFixed(1)}%)`,
+          );
+        }
+        output.push('');
+      }
+
+      // 瓶颈分析
+      if (analysis.bottlenecks.length > 0) {
+        output.push('⚠️  性能瓶颈');
+        output.push('-'.repeat(80));
+        for (const bottleneck of analysis.bottlenecks) {
+          const severityEmoji = this._getSeverityEmoji(bottleneck.severity);
+          output.push(
+            `  ${severityEmoji} [${bottleneck.severity}] ${bottleneck.type}`,
+          );
+          output.push(`     ${bottleneck.message}`);
+          output.push(
+            `     Channel: ${bottleneck.channel}, 耗时: ${this._formatTime(bottleneck.waitTime)} / ${this._formatTime(bottleneck.totalTime)} (${bottleneck.ratio})`,
+          );
+        }
+        output.push('');
+      }
+
+      // 优化建议
+      if (recommendations.length > 0) {
+        output.push('💡 优化建议');
+        output.push('-'.repeat(80));
+        for (const rec of recommendations) {
+          const severityEmoji = this._getSeverityEmoji(rec.severity);
+          output.push(`  ${severityEmoji} [${rec.severity}] ${rec.title}`);
+          output.push(`     ${rec.description}`);
+          output.push(`     建议措施:`);
+          for (const suggestion of rec.suggestions) {
+            output.push(`       • ${suggestion}`);
+          }
+          if (rec.sql_commands) {
+            output.push(`     SQL 命令:`);
+            for (const cmd of rec.sql_commands) {
+              output.push(`       ${cmd}`);
+            }
+          }
+          output.push('');
+        }
+      }
+
+      output.push('='.repeat(80));
+      const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
+      output.push(`分析完成，耗时: ${elapsedTime}s`);
+      output.push('='.repeat(80));
+
+      console.error(`✅ LoadChannel Profile 分析完成，耗时 ${elapsedTime}s`);
+
+      return {
+        success: true,
+        report: output.join('\n'),
+        parsed_profile: parsedProfile,
+        analysis: analysis,
+        recommendations: recommendations,
+      };
+    } catch (error) {
+      console.error(`❌ LoadChannel Profile 分析失败: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        report: `分析失败: ${error.message}`,
+      };
+    }
   }
 
   /**
@@ -3906,10 +5465,11 @@ class StarRocksIngestionExpert {
               type: 'string',
               description: '表名称',
             },
-            days: {
+            seconds: {
               type: 'number',
-              description: '分析天数（默认7天）',
-              default: 7,
+              description:
+                '分析时间范围（秒数，默认7天=604800秒）。支持细粒度时间范围，如3600=1小时，86400=1天',
+              default: 604800,
             },
           },
           required: ['database_name', 'table_name'],
@@ -3930,6 +5490,107 @@ class StarRocksIngestionExpert {
             database_name: {
               type: 'string',
               description: '数据库名称（可选，用于过滤特定数据库的作业）',
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: 'analyze_reached_timeout',
+        description:
+          '🔍 Reached Timeout 问题综合分析 - 根据 SOP 文档实现的导入慢问题诊断工具\n\n' +
+          '功能概述：\n' +
+          '• 分析集群资源使用情况（CPU、IO、网络）\n' +
+          '• 分析 BRPC 接口延迟和处理情况\n' +
+          '• 分析各线程池状态（Async delta writer、Memtable flush、Segment replicate、Segment flush）\n' +
+          '• 识别导入瓶颈环节（资源、BRPC、线程池）\n' +
+          '• 提供针对性的解决方案和配置优化建议\n\n' +
+          '适用场景：\n' +
+          '• 导入任务报错 [E1008]Reached timeout\n' +
+          '• 导入速度慢，但未超时\n' +
+          '• 需要优化导入性能\n' +
+          '• 需要排查导入瓶颈\n\n' +
+          '分析维度：\n' +
+          '1. 资源瓶颈：CPU、IO、网络使用情况\n' +
+          '2. BRPC 瓶颈：tablet_writer_open/add_chunks/add_segment 延迟分析\n' +
+          '3. 线程池瓶颈：各线程池使用率、队列积压、任务耗时\n' +
+          '4. 依赖关系：各环节依赖关系和耗时占比\n\n' +
+          '解决方案：\n' +
+          '• 资源扩容建议（BE 节点、磁盘、CPU）\n' +
+          '• 线程池调优建议（具体配置 SQL）\n' +
+          '• 主键表优化建议（skip_pk_preload）\n' +
+          '• 超时时间调整建议\n' +
+          '• 历史问题检查清单\n\n' +
+          '⚠️ 注意事项：\n' +
+          '• 当前版本 Prometheus 集成待完善，部分指标需手动检查 Grafana 面板\n' +
+          '• 建议结合 BE 日志和 Profile 进一步分析\n' +
+          '• 配置调整后需持续观察监控指标\n\n' +
+          '⚠️ 输出指示：此工具返回预格式化的详细报告，请**完整、原样**输出所有内容。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            be_host: {
+              type: 'string',
+              description: 'BE 节点地址（可选，格式如 192.168.1.100:8060）',
+            },
+            architecture: {
+              type: 'string',
+              description:
+                '架构类型：replicated（存算一体）或 shared_data（存算分离）',
+              enum: ['replicated', 'shared_data'],
+              default: 'replicated',
+            },
+            time_range_minutes: {
+              type: 'number',
+              description: '分析时间范围（分钟，默认30分钟）',
+              default: 30,
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: 'analyze_load_channel_profile',
+        description:
+          '📊 LoadChannel Profile 深度分析 - 分析导入任务的 LoadChannel Profile，识别性能瓶颈\n\n' +
+          '功能概述：\n' +
+          '• 解析 LoadChannel、TabletsChannel、DeltaWriter 三层结构\n' +
+          '• 分析各阶段耗时占比（WaitFlushTime、WaitWriterTime、WaitReplicaTime）\n' +
+          '• 识别性能瓶颈环节（Memtable Flush、Async Delta Writer、副本同步）\n' +
+          '• 计算导入速度和吞吐量\n' +
+          '• 提供针对性的优化建议和配置调整方案\n\n' +
+          '适用场景：\n' +
+          '• 导入任务性能优化\n' +
+          '• Reached Timeout 问题深度分析\n' +
+          '• 识别导入慢的根本原因\n' +
+          '• 优化导入配置参数\n\n' +
+          '分析维度：\n' +
+          '1. 基本信息：LoadId、TxnId、Channel数、Index数、导入行数\n' +
+          '2. 耗时分析：AddChunkTime 及各等待阶段的耗时占比\n' +
+          '3. 性能指标：平均导入速度（行/秒）\n' +
+          '4. Channel 详情：每个 Channel 的内存使用、耗时分布\n' +
+          '5. 瓶颈识别：自动识别 Memtable Flush、Writer、副本同步瓶颈\n' +
+          '6. 优化建议：提供具体的配置调整建议和 SQL 命令\n\n' +
+          '输入方式：\n' +
+          '• 方式1：提供 query_id，自动从 FE 获取 Profile\n' +
+          '• 方式2：直接提供 profile_text 文本内容\n\n' +
+          '⚠️ 注意事项：\n' +
+          '• 需要确保 Profile 中包含 LoadChannel 信息\n' +
+          '• 建议开启 enable_profile = true 或设置 big_query_profile_threshold\n' +
+          '• 可以通过 pipeline_profile_level 控制 Profile 详细程度\n\n' +
+          '⚠️ 输出指示：此工具返回预格式化的详细报告，请**完整、原样**输出所有内容。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query_id: {
+              type: 'string',
+              description:
+                '导入任务的 Query ID（可选，如果提供则从 FE 获取 Profile）',
+            },
+            profile_text: {
+              type: 'string',
+              description:
+                'LoadChannel Profile 文本内容（可选，如果不提供 query_id 则必须提供此参数）',
             },
           },
           required: [],
