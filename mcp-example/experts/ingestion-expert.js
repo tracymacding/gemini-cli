@@ -5573,6 +5573,37 @@ class StarRocksIngestionExpert {
           output.push(`     • 跨节点网络通信延迟`);
           output.push(`     • 其他未instrumented的代码路径`);
           output.push('');
+          output.push(`  📋 排查建议：`);
+          output.push(`     1. 检查事务 Publish 耗时（最常见原因）`);
+          output.push(`        在 FE 节点的 fe.log 中搜索：`);
+          if (parsedProfile.txnId) {
+            output.push(
+              `        grep "${parsedProfile.txnId}" fe.log | grep "publish"`,
+            );
+          }
+          if (parsedProfile.loadId) {
+            output.push(
+              `        grep "${parsedProfile.loadId}" fe.log | grep "publish"`,
+            );
+          }
+          output.push(`        或根据 Label 搜索：`);
+          output.push(`        grep "your_label" fe.log | grep "publish"`);
+          output.push(
+            `        关注 "finish to publish transaction" 日志的耗时`,
+          );
+          output.push('');
+          output.push(`     2. 检查 Frontend 日志中的事务处理流程`);
+          output.push(`        关键日志关键词：`);
+          output.push(`        • "begin to publish transaction"`);
+          output.push(`        • "finish to publish transaction"`);
+          output.push(`        • "transaction commit successfully"`);
+          output.push(`        • "wait for transaction"`);
+          output.push('');
+          output.push(`     3. 如果是显式事务（autocommit=false），检查：`);
+          output.push(`        • COMMIT 命令执行时间`);
+          output.push(`        • 事务持有锁的时间`);
+          output.push(`        • 是否有其他事务阻塞`);
+          output.push('');
         }
       }
 
