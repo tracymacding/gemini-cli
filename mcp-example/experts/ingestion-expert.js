@@ -12,6 +12,7 @@
 /* eslint-disable no-undef, @typescript-eslint/no-unused-vars */
 
 import fs from 'node:fs';
+import { detectArchitectureType } from './common-utils.js';
 
 class StarRocksIngestionExpert {
   constructor() {
@@ -4097,7 +4098,7 @@ class StarRocksIngestionExpert {
         const connection = context.connection;
         const result = await this.analyzeReachedTimeout(connection, {
           be_host: args.be_host,
-          architecture: args.architecture || 'replicated',
+          architecture: args.architecture, // null if not provided, will auto-detect
           time_range_minutes: args.time_range_minutes || 30,
         });
 
@@ -4163,18 +4164,37 @@ class StarRocksIngestionExpert {
    * @param {Object} connection - 数据库连接
    * @param {Object} options - 分析选项
    * @param {string} options.be_host - BE 节点地址（可选）
-   * @param {string} options.architecture - 架构类型：'replicated'（存算一体）或 'shared_data'（存算分离）
+   * @param {string} options.architecture - 架构类型：'replicated'（存算一体）或 'shared_data'（存算分离），默认自动检测
    * @param {number} options.time_range_minutes - 分析时间范围（分钟，默认30分钟）
    * @returns {Object} 分析报告
    */
   async analyzeReachedTimeout(connection, options = {}) {
-    const {
+    let {
       be_host = null,
-      architecture = 'replicated', // 'replicated' or 'shared_data'
+      architecture = null, // 'replicated' or 'shared_data', null for auto-detect
       time_range_minutes = 30,
     } = options;
 
     try {
+      // 自动检测架构类型（如果未指定）
+      if (!architecture) {
+        console.error('🔍 正在自动检测集群架构类型...');
+        try {
+          const archInfo = await detectArchitectureType(connection);
+          // 映射架构类型: shared_nothing → replicated, shared_data → shared_data
+          architecture =
+            archInfo.type === 'shared_nothing' ? 'replicated' : 'shared_data';
+          console.error(
+            `✅ 检测到架构: ${archInfo.description} (${architecture})`,
+          );
+        } catch (error) {
+          console.error(
+            `⚠️  架构检测失败，使用默认值 'replicated': ${error.message}`,
+          );
+          architecture = 'replicated';
+        }
+      }
+
       const report = {
         title: '🔍 StarRocks 导入 Reached Timeout 问题分析报告',
         timestamp: new Date().toISOString(),
@@ -5881,9 +5901,8 @@ class StarRocksIngestionExpert {
             architecture: {
               type: 'string',
               description:
-                '架构类型：replicated（存算一体）或 shared_data（存算分离）',
+                '架构类型：replicated（存算一体）或 shared_data（存算分离）。如果不提供，将自动检测集群架构类型',
               enum: ['replicated', 'shared_data'],
-              default: 'replicated',
             },
             time_range_minutes: {
               type: 'number',
