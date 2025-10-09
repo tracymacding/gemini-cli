@@ -11,6 +11,8 @@
 
 /* eslint-disable no-undef, @typescript-eslint/no-unused-vars */
 
+import fs from 'node:fs';
+
 class StarRocksIngestionExpert {
   constructor() {
     this.name = 'ingestion';
@@ -4120,6 +4122,8 @@ class StarRocksIngestionExpert {
           connection,
           args.query_id,
           args.profile_text,
+          args.profile_file,
+          args.verbose || false, // 默认使用简洁模式
         );
 
         // 添加输出指示，引导 LLM 原样输出
@@ -4754,30 +4758,6 @@ class StarRocksIngestionExpert {
   }
 
   /**
-   * 解析时间字符串为毫秒数
-   */
-  _parseTimeToMs(timeStr) {
-    if (!timeStr || timeStr === '0ns') return 0;
-
-    const match = timeStr.match(/^([\d.]+)([a-z]+)$/i);
-    if (!match) return 0;
-
-    const value = parseFloat(match[1]);
-    const unit = match[2].toLowerCase();
-
-    const unitMap = {
-      ns: 1 / 1000000,
-      us: 1 / 1000,
-      ms: 1,
-      s: 1000,
-      m: 60000,
-      h: 3600000,
-    };
-
-    return value * (unitMap[unit] || 0);
-  }
-
-  /**
    * 格式化时间（毫秒）为可读字符串
    */
   _formatTime(ms) {
@@ -4785,6 +4765,74 @@ class StarRocksIngestionExpert {
     if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`;
     if (ms < 3600000) return `${(ms / 60000).toFixed(2)}m`;
     return `${(ms / 3600000).toFixed(2)}h`;
+  }
+
+  /**
+   * 解析时间字符串为毫秒
+   * 支持格式: "9s918ms", "49.767ms", "5.072ms", "1m30s", "1h", "0ns", "123us"
+   */
+  _parseTimeToMs(timeStr) {
+    if (!timeStr || typeof timeStr !== 'string') return 0;
+
+    let totalMs = 0;
+
+    // 匹配小时 (h)
+    const hoursMatch = timeStr.match(/([\d.]+)h/);
+    if (hoursMatch) {
+      totalMs += parseFloat(hoursMatch[1]) * 3600000;
+    }
+
+    // 匹配分钟 (m)
+    const minutesMatch = timeStr.match(/([\d.]+)m(?!s)/); // 避免匹配 ms
+    if (minutesMatch) {
+      totalMs += parseFloat(minutesMatch[1]) * 60000;
+    }
+
+    // 匹配秒 (s)
+    const secondsMatch = timeStr.match(/([\d.]+)s(?!$)/); // 后面必须有东西，避免单独的 "s"
+    if (secondsMatch) {
+      totalMs += parseFloat(secondsMatch[1]) * 1000;
+    }
+
+    // 匹配毫秒 (ms)
+    const msMatch = timeStr.match(/([\d.]+)ms/);
+    if (msMatch) {
+      totalMs += parseFloat(msMatch[1]);
+    }
+
+    // 匹配微秒 (us)
+    const usMatch = timeStr.match(/([\d.]+)us/);
+    if (usMatch) {
+      totalMs += parseFloat(usMatch[1]) / 1000;
+    }
+
+    // 匹配纳秒 (ns)
+    const nsMatch = timeStr.match(/([\d.]+)ns/);
+    if (nsMatch) {
+      totalMs += parseFloat(nsMatch[1]) / 1000000;
+    }
+
+    return totalMs;
+  }
+
+  /**
+   * 解析内存大小字符串为字节数
+   * 例如: "6.180 KB" -> 6180, "1.5 MB" -> 1572864
+   */
+  _parseMemory(memStr) {
+    if (!memStr || typeof memStr !== 'string') return 0;
+    const match = memStr.match(/([\d.]+)\s*([KMGT]?B)/i);
+    if (!match) return 0;
+    const value = parseFloat(match[1]);
+    const unit = match[2].toUpperCase();
+    const multipliers = {
+      B: 1,
+      KB: 1024,
+      MB: 1024 * 1024,
+      GB: 1024 * 1024 * 1024,
+      TB: 1024 * 1024 * 1024 * 1024,
+    };
+    return value * (multipliers[unit] || 1);
   }
 
   /**
@@ -4796,6 +4844,18 @@ class StarRocksIngestionExpert {
       loadId: null,
       txnId: null,
       channels: [],
+      // 添加 Summary 和其他关键信息
+      summary: {
+        totalTime: null, // 总耗时（从 Summary）
+        queryExecutionWallTime: null,
+        resultDeliverTime: null,
+        autocommit: null,
+      },
+      sink: {
+        closeWaitTime: null,
+        rpcClientSideTime: null,
+        rpcServerSideTime: null,
+      },
     };
 
     let currentChannel = null;
@@ -4807,6 +4867,57 @@ class StarRocksIngestionExpert {
 
       // 跳过空行
       if (!trimmed) continue;
+
+      // 解析 Summary 中的总耗时
+      if (trimmed.startsWith('- Total:')) {
+        result.summary.totalTime = trimmed.split(':')[1].trim();
+        continue;
+      }
+
+      // 解析 autocommit 配置
+      if (trimmed.includes('"autocommit"')) {
+        const match = trimmed.match(
+          /"autocommit":\{"defaultValue":(true|false),"actualValue":(true|false)\}/,
+        );
+        if (match) {
+          result.summary.autocommit = match[2] === 'true';
+        }
+        continue;
+      }
+
+      // 解析 QueryExecutionWallTime
+      if (trimmed.startsWith('- QueryExecutionWallTime:')) {
+        result.summary.queryExecutionWallTime = trimmed.split(':')[1].trim();
+        continue;
+      }
+
+      // 解析 ResultDeliverTime
+      if (trimmed.startsWith('- ResultDeliverTime:')) {
+        result.summary.resultDeliverTime = trimmed.split(':')[1].trim();
+        continue;
+      }
+
+      // 解析 OLAP_TABLE_SINK 的关键指标
+      if (trimmed.startsWith('- CloseWaitTime:') && !trimmed.includes('__')) {
+        result.sink.closeWaitTime = trimmed.split(':')[1].trim();
+        continue;
+      }
+
+      if (
+        trimmed.startsWith('- RpcClientSideTime:') &&
+        !trimmed.includes('__')
+      ) {
+        result.sink.rpcClientSideTime = trimmed.split(':')[1].trim();
+        continue;
+      }
+
+      if (
+        trimmed.startsWith('- RpcServerSideTime:') &&
+        !trimmed.includes('__')
+      ) {
+        result.sink.rpcServerSideTime = trimmed.split(':')[1].trim();
+        continue;
+      }
 
       // 解析 LoadChannel 级别
       if (trimmed.startsWith('LoadChannel:')) {
@@ -4851,28 +4962,105 @@ class StarRocksIngestionExpert {
         continue;
       }
 
-      // 解析 Channel 级别的属性
-      if (currentChannel && !currentIndex) {
+      // 解析 LoadChannel 或 Channel 级别的属性
+      // 如果没有当前Channel但遇到了这些属性，创建默认Channel
+      if (!currentIndex) {
         if (trimmed.startsWith('- PeakMemoryUsage:')) {
+          if (!currentChannel) {
+            currentChannel = {
+              host: 'LoadChannel',
+              peakMemoryUsage: 0,
+              loadMemoryLimit: 0,
+              indexNum: 0,
+              backendAddresses: [],
+              channelNum: 0,
+              indices: [],
+            };
+            result.channels.push(currentChannel);
+          }
           currentChannel.peakMemoryUsage = trimmed.split(':')[1].trim();
         } else if (trimmed.startsWith('- LoadMemoryLimit:')) {
+          if (!currentChannel) {
+            currentChannel = {
+              host: 'LoadChannel',
+              peakMemoryUsage: 0,
+              loadMemoryLimit: 0,
+              indexNum: 0,
+              backendAddresses: [],
+              channelNum: 0,
+              indices: [],
+            };
+            result.channels.push(currentChannel);
+          }
           currentChannel.loadMemoryLimit = trimmed.split(':')[1].trim();
         } else if (trimmed.startsWith('- IndexNum:')) {
+          if (!currentChannel) {
+            currentChannel = {
+              host: 'LoadChannel',
+              peakMemoryUsage: 0,
+              loadMemoryLimit: 0,
+              indexNum: 0,
+              backendAddresses: [],
+              channelNum: 0,
+              indices: [],
+            };
+            result.channels.push(currentChannel);
+          }
           currentChannel.indexNum = parseInt(trimmed.split(':')[1].trim());
         } else if (trimmed.startsWith('- BackendAddresses:')) {
+          if (!currentChannel) {
+            currentChannel = {
+              host: 'LoadChannel',
+              peakMemoryUsage: 0,
+              loadMemoryLimit: 0,
+              indexNum: 0,
+              backendAddresses: [],
+              channelNum: 0,
+              indices: [],
+            };
+            result.channels.push(currentChannel);
+          }
           currentChannel.backendAddresses = trimmed
             .split(':')[1]
             .trim()
             .split(',');
         } else if (trimmed.startsWith('- ChannelNum:')) {
+          if (!currentChannel) {
+            currentChannel = {
+              host: 'LoadChannel',
+              peakMemoryUsage: 0,
+              loadMemoryLimit: 0,
+              indexNum: 0,
+              backendAddresses: [],
+              channelNum: 0,
+              indices: [],
+            };
+            result.channels.push(currentChannel);
+          }
           currentChannel.channelNum = parseInt(trimmed.split(':')[1].trim());
         } else if (trimmed.startsWith('- Address:')) {
-          currentChannel.host = trimmed.split(':')[1].trim();
+          if (currentChannel) {
+            currentChannel.host = trimmed.split(':')[1].trim();
+          }
         }
       }
 
       // 解析 Index
       if (trimmed.startsWith('Index (id=') || trimmed.startsWith('Index:')) {
+        // 如果还没有 Channel，创建一个默认 Channel（用于直接在 LoadChannel 下有 Index 的情况）
+        if (!currentChannel) {
+          currentChannel = {
+            host: 'LoadChannel',
+            peakMemoryUsage: 0,
+            loadMemoryLimit: 0,
+            indexNum: 0,
+            backendAddresses: [],
+            channelNum: 0,
+            indices: [],
+          };
+          result.channels.push(currentChannel);
+        }
+
         const idMatch = trimmed.match(/id=(\d+)/);
         currentIndex = {
           indexId: idMatch ? idMatch[1] : 'unknown',
@@ -5237,12 +5425,28 @@ class StarRocksIngestionExpert {
     connection,
     queryId = null,
     profileText = null,
+    profileFile = null,
+    verbose = false,
   ) {
     console.error('🔍 开始分析 LoadChannel Profile...');
+    console.error(`📝 输出模式: ${verbose ? '详细' : '简洁'}`);
     const startTime = Date.now();
 
     try {
-      // 如果提供了 query_id，从 FE 获取 profile
+      // 优先级：profileFile > queryId > profileText
+
+      // 1. 如果提供了 profile_file，从文件读取
+      if (profileFile && !profileText) {
+        console.error(`📄 从文件读取 Profile: ${profileFile}`);
+        try {
+          profileText = fs.readFileSync(profileFile, 'utf8');
+          console.error(`✅ 成功读取文件，大小: ${profileText.length} 字符`);
+        } catch (error) {
+          throw new Error(`无法读取文件 ${profileFile}: ${error.message}`);
+        }
+      }
+
+      // 2. 如果提供了 query_id，从 FE 获取 profile
       if (queryId && !profileText) {
         console.error(`📊 从 FE 获取 Query ${queryId} 的 Profile...`);
         const profileQuery = `SELECT QUERY_PROFILE('${queryId}')`;
@@ -5256,7 +5460,9 @@ class StarRocksIngestionExpert {
       }
 
       if (!profileText) {
-        throw new Error('必须提供 query_id 或 profile_text 参数');
+        throw new Error(
+          '必须提供 query_id、profile_text 或 profile_file 参数之一',
+        );
       }
 
       // 检查是否包含 LoadChannel 信息
@@ -5299,7 +5505,76 @@ class StarRocksIngestionExpert {
       output.push(
         `  总导入行数: ${analysis.summary.totalRows.toLocaleString()}`,
       );
+      if (parsedProfile.summary.autocommit !== null) {
+        output.push(
+          `  AutoCommit: ${parsedProfile.summary.autocommit ? '✅ 启用' : '❌ 禁用'}`,
+        );
+      }
       output.push('');
+
+      // 时间分布分析（如果有总时间信息）
+      if (parsedProfile.summary.totalTime) {
+        output.push('⏰ 时间分布分析');
+        output.push('-'.repeat(80));
+
+        const totalTimeMs = this._parseTimeToMs(
+          parsedProfile.summary.totalTime,
+        );
+        const loadChannelTimeMs = analysis.summary.totalAddChunkTime;
+        const queryExecTimeMs = parsedProfile.summary.queryExecutionWallTime
+          ? this._parseTimeToMs(parsedProfile.summary.queryExecutionWallTime)
+          : 0;
+        const closeWaitTimeMs = parsedProfile.sink.closeWaitTime
+          ? this._parseTimeToMs(parsedProfile.sink.closeWaitTime)
+          : 0;
+        const rpcClientTimeMs = parsedProfile.sink.rpcClientSideTime
+          ? this._parseTimeToMs(parsedProfile.sink.rpcClientSideTime)
+          : 0;
+
+        const accountedTime =
+          loadChannelTimeMs + closeWaitTimeMs + rpcClientTimeMs;
+        const missingTime = totalTimeMs - accountedTime;
+        const missingPercent =
+          totalTimeMs > 0 ? (missingTime / totalTimeMs) * 100 : 0;
+
+        output.push(`  总任务耗时: ${this._formatTime(totalTimeMs)} (100%)`);
+        output.push(
+          `  ├─ QueryExecutionWallTime: ${this._formatTime(queryExecTimeMs)} (${((queryExecTimeMs / totalTimeMs) * 100).toFixed(1)}%)`,
+        );
+        output.push(
+          `  ├─ LoadChannel AddChunk: ${this._formatTime(loadChannelTimeMs)} (${((loadChannelTimeMs / totalTimeMs) * 100).toFixed(1)}%)`,
+        );
+        if (closeWaitTimeMs > 0) {
+          output.push(
+            `  ├─ CloseWaitTime: ${this._formatTime(closeWaitTimeMs)} (${((closeWaitTimeMs / totalTimeMs) * 100).toFixed(1)}%)`,
+          );
+        }
+        if (rpcClientTimeMs > 0) {
+          output.push(
+            `  ├─ RpcClientSideTime: ${this._formatTime(rpcClientTimeMs)} (${((rpcClientTimeMs / totalTimeMs) * 100).toFixed(1)}%)`,
+          );
+        }
+        output.push(
+          `  └─ ⚠️  未解释时间: ${this._formatTime(missingTime)} (${missingPercent.toFixed(1)}%)`,
+        );
+        output.push('');
+
+        // 如果有大量未解释时间，添加警告
+        if (missingPercent > 50) {
+          output.push(
+            `  🔴 警告: ${missingPercent.toFixed(1)}% 的时间未在 Profile 中体现！`,
+          );
+          output.push(`     这通常表示时间花费在:`);
+          output.push(`     • 事务提交协调 (2PC Prepare/Commit)`);
+          if (parsedProfile.summary.autocommit === false) {
+            output.push(`     • 显式事务等待 (autocommit=false)`);
+          }
+          output.push(`     • Frontend 元数据更新`);
+          output.push(`     • 跨节点网络通信延迟`);
+          output.push(`     • 其他未instrumented的代码路径`);
+          output.push('');
+        }
+      }
 
       // 耗时统计
       output.push('⏱️  耗时统计');
@@ -5325,36 +5600,59 @@ class StarRocksIngestionExpert {
       );
       output.push('');
 
-      // Channel 详细信息
-      output.push('📡 Channel 详细信息');
-      output.push('-'.repeat(80));
-      for (const channel of analysis.channelAnalysis) {
-        output.push(`  Channel: ${channel.host}`);
-        output.push(`    内存峰值: ${channel.peakMemoryUsage}`);
-        output.push(`    Index 数量: ${channel.indexNum}`);
-        output.push(`    总耗时: ${this._formatTime(channel.totalTime)}`);
-        output.push(
-          `    等待耗时: ${this._formatTime(channel.totalWaitTime)} (${channel.totalTime > 0 ? ((channel.totalWaitTime / channel.totalTime) * 100).toFixed(1) : 0}%)`,
-        );
+      // Channel 详细信息（简洁模式跳过或简化）
+      if (verbose) {
+        output.push('📡 Channel 详细信息');
+        output.push('-'.repeat(80));
+        for (const channel of analysis.channelAnalysis) {
+          output.push(`  Channel: ${channel.host}`);
+          output.push(`    内存峰值: ${channel.peakMemoryUsage}`);
+          output.push(`    Index 数量: ${channel.indexNum}`);
+          output.push(`    总耗时: ${this._formatTime(channel.totalTime)}`);
+          output.push(
+            `    等待耗时: ${this._formatTime(channel.totalWaitTime)} (${channel.totalTime > 0 ? ((channel.totalWaitTime / channel.totalTime) * 100).toFixed(1) : 0}%)`,
+          );
 
-        for (const index of channel.indices) {
-          output.push(`    Index ${index.indexId}:`);
-          output.push(
-            `      AddChunkCount: ${index.addChunkCount}, AddRowNum: ${index.addRowNum.toLocaleString()}`,
+          for (const index of channel.indices) {
+            output.push(`    Index ${index.indexId}:`);
+            output.push(
+              `      AddChunkCount: ${index.addChunkCount}, AddRowNum: ${index.addRowNum.toLocaleString()}`,
+            );
+            output.push(
+              `      AddChunkTime: ${this._formatTime(index.addChunkTime)}`,
+            );
+            output.push(
+              `        ├─ WaitFlushTime: ${this._formatTime(index.waitFlushTime)} (${((index.waitFlushTime / index.addChunkTime) * 100).toFixed(1)}%)`,
+            );
+            output.push(
+              `        ├─ WaitWriterTime: ${this._formatTime(index.waitWriterTime)} (${((index.waitWriterTime / index.addChunkTime) * 100).toFixed(1)}%)`,
+            );
+            output.push(
+              `        └─ WaitReplicaTime: ${this._formatTime(index.waitReplicaTime)} (${((index.waitReplicaTime / index.addChunkTime) * 100).toFixed(1)}%)`,
+            );
+          }
+          output.push('');
+        }
+      } else {
+        // 简洁模式：只显示概要
+        output.push('📡 Channel 概要');
+        output.push('-'.repeat(80));
+        output.push(`  总 Channel 数: ${analysis.channelAnalysis.length}`);
+        output.push(`  总 Index 数: ${analysis.summary.totalIndices}`);
+        if (analysis.channelAnalysis.length > 0) {
+          const maxMemChannel = analysis.channelAnalysis.reduce((max, ch) =>
+            this._parseMemory(ch.peakMemoryUsage) >
+            this._parseMemory(max.peakMemoryUsage)
+              ? ch
+              : max,
           );
           output.push(
-            `      AddChunkTime: ${this._formatTime(index.addChunkTime)}`,
-          );
-          output.push(
-            `        ├─ WaitFlushTime: ${this._formatTime(index.waitFlushTime)} (${((index.waitFlushTime / index.addChunkTime) * 100).toFixed(1)}%)`,
-          );
-          output.push(
-            `        ├─ WaitWriterTime: ${this._formatTime(index.waitWriterTime)} (${((index.waitWriterTime / index.addChunkTime) * 100).toFixed(1)}%)`,
-          );
-          output.push(
-            `        └─ WaitReplicaTime: ${this._formatTime(index.waitReplicaTime)} (${((index.waitReplicaTime / index.addChunkTime) * 100).toFixed(1)}%)`,
+            `  最大内存使用: ${maxMemChannel.peakMemoryUsage} (${maxMemChannel.host})`,
           );
         }
+        output.push(
+          '  提示: 使用 verbose=true 查看详细的 Channel 和 Index 信息',
+        );
         output.push('');
       }
 
@@ -5383,14 +5681,30 @@ class StarRocksIngestionExpert {
           const severityEmoji = this._getSeverityEmoji(rec.severity);
           output.push(`  ${severityEmoji} [${rec.severity}] ${rec.title}`);
           output.push(`     ${rec.description}`);
-          output.push(`     建议措施:`);
-          for (const suggestion of rec.suggestions) {
-            output.push(`       • ${suggestion}`);
-          }
-          if (rec.sql_commands) {
-            output.push(`     SQL 命令:`);
-            for (const cmd of rec.sql_commands) {
-              output.push(`       ${cmd}`);
+
+          if (verbose) {
+            // 详细模式：显示所有建议措施和 SQL 命令
+            output.push(`     建议措施:`);
+            for (const suggestion of rec.suggestions) {
+              output.push(`       • ${suggestion}`);
+            }
+            if (rec.sql_commands) {
+              output.push(`     SQL 命令:`);
+              for (const cmd of rec.sql_commands) {
+                output.push(`       ${cmd}`);
+              }
+            }
+          } else {
+            // 简洁模式：只显示前2条建议
+            if (rec.suggestions && rec.suggestions.length > 0) {
+              output.push(
+                `     关键建议: ${rec.suggestions.slice(0, 2).join('; ')}`,
+              );
+              if (rec.suggestions.length > 2) {
+                output.push(
+                  `     (使用 verbose=true 查看全部 ${rec.suggestions.length} 条建议)`,
+                );
+              }
             }
           }
           output.push('');
@@ -5591,6 +5905,16 @@ class StarRocksIngestionExpert {
               type: 'string',
               description:
                 'LoadChannel Profile 文本内容（可选，如果不提供 query_id 则必须提供此参数）',
+            },
+            profile_file: {
+              type: 'string',
+              description:
+                'LoadChannel Profile 文件路径（可选，如果提供则从文件读取 Profile 内容）',
+            },
+            verbose: {
+              type: 'boolean',
+              description:
+                '是否输出详细报告（默认 false）。简洁模式只输出关键信息和瓶颈分析，详细模式包含所有 Channel 和 Index 的详细信息',
             },
           },
           required: [],
