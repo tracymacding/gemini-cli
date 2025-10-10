@@ -8,7 +8,8 @@
 
 ✅ **灵活查询**
 
-- 支持通过 Label 或 TxnId 精准查询
+- 支持通过 Label 或 TxnId 查询
+- **Label 支持模糊匹配**：自动处理系统添加的前缀（如 `insert_`, `load_`, `broker_load_` 等）
 - 混合查询历史表和内存表，确保数据完整性
 - 可选数据库名称过滤，提高查询准确性
 
@@ -42,6 +43,32 @@
 | `include_recommendations` | boolean | 否   | 是否包含优化建议（默认 true）        |
 
 ⚠️ **注意**: `label` 和 `txn_id` 必须提供至少一个
+
+### Label 模糊匹配说明
+
+工具使用 **LIKE 模糊匹配**查询 Label，可以自动匹配系统添加的各种前缀：
+
+**支持的前缀示例**：
+
+- `insert_` - INSERT 导入
+- `load_` - LOAD 导入
+- `broker_load_` - Broker Load
+- `routine_load_` - Routine Load
+- 其他自定义前缀
+
+**匹配规则**：
+
+- 用户提供：`abc-123-456`
+- 可匹配到：
+  - `insert_abc-123-456`
+  - `load_abc-123-456`
+  - `broker_load_abc-123-456`
+  - `my_prefix_abc-123-456`
+
+**最佳实践**：
+
+- 直接提供原始 Label，无需关心前缀
+- 如果 Label 可能有歧义，建议同时提供 `database_name` 参数
 
 ## 使用示例
 
@@ -328,16 +355,24 @@ Error: Load job [label:xxx] failed
 ### SQL 查询逻辑
 
 ```sql
--- 1. 优先查询历史表
+-- 1. 优先查询历史表（使用 LIKE 模糊匹配 Label）
 SELECT ... FROM _statistics_.loads_history
-WHERE LABEL = ? AND DB_NAME = ?
+WHERE LABEL LIKE ? AND DB_NAME = ?
 ORDER BY CREATE_TIME DESC LIMIT 1;
+-- 参数：LIKE '%label' (匹配任何前缀)
 
 -- 2. 如果未找到，查询内存表
 SELECT ... FROM information_schema.loads
-WHERE LABEL = ? AND DB_NAME = ?
+WHERE LABEL LIKE ? AND DB_NAME = ?
 ORDER BY CREATE_TIME DESC LIMIT 1;
+-- 参数：LIKE '%label' (匹配任何前缀)
 ```
+
+**查询说明**：
+
+- 使用 `LIKE '%label'` 实现模糊匹配
+- 可匹配任何前缀的 Label（如 `insert_label`, `load_label`）
+- 按创建时间降序排序，确保获取最新的任务
 
 ### 失败分析算法
 
@@ -362,6 +397,13 @@ filter_ratio = ((filtered_rows + unselected_rows) / scan_rows) * 100;
 ```
 
 ## 更新日志
+
+### v1.1.0 (2025-01-11)
+
+- ✅ **Label 模糊匹配**：改进 Label 查询逻辑，支持自动匹配系统添加的前缀
+- ✅ 查询方式从 `LABEL = ?` 改为 `LABEL LIKE '%?'`
+- ✅ 用户无需关心系统前缀，直接提供原始 Label 即可
+- ✅ 更新工具描述和使用文档
 
 ### v1.0.0 (2025-01-10)
 

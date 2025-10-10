@@ -3132,8 +3132,9 @@ class StarRocksIngestionExpert {
       const params = [];
 
       if (label) {
-        conditions.push('LABEL = ?');
-        params.push(label);
+        // 使用模糊匹配，因为系统可能在 label 前添加前缀（如 insert_, load_ 等）
+        conditions.push('LABEL LIKE ?');
+        params.push(`%${label}`);
       }
 
       if (txnId) {
@@ -6725,7 +6726,7 @@ class StarRocksIngestionExpert {
         description:
           '🔍 导入任务状态查询与失败分析 - 根据 Label 或 TxnId 查询导入任务状态，分析失败原因并提供解决方案\n\n' +
           '功能概述：\n' +
-          '• 支持通过 Label 或 TxnId 精准查询导入任务\n' +
+          '• 支持通过 Label 或 TxnId 查询导入任务（Label 支持模糊匹配，自动处理系统添加的前缀）\n' +
           '• 混合查询历史表和内存表，确保数据完整性\n' +
           '• 展示任务详细信息（状态、耗时、数据量、性能指标）\n' +
           '• 智能分析失败原因（超时、资源不足、数据质量等）\n' +
@@ -6736,6 +6737,10 @@ class StarRocksIngestionExpert {
           '• 获取导入性能数据（吞吐量、行数、耗时）\n' +
           '• 查看错误信息和 TRACKING_SQL\n' +
           '• 获取针对性的优化建议\n\n' +
+          'Label 查询说明：\n' +
+          '• 支持模糊匹配，可自动匹配带前缀的 Label（如 insert_xxx, load_xxx）\n' +
+          '• 用户只需提供原始 Label，无需关心系统添加的前缀\n' +
+          '• 示例：提供 "abc-123" 可匹配 "insert_abc-123" 或 "broker_load_abc-123"\n\n' +
           '失败分类覆盖：\n' +
           '1. 超时问题 (Timeout/Reached Timeout)\n' +
           '2. 资源不足 (Memory/Resource)\n' +
@@ -6756,7 +6761,8 @@ class StarRocksIngestionExpert {
           properties: {
             label: {
               type: 'string',
-              description: '导入任务的 Label（可选，与 txn_id 二选一）',
+              description:
+                '导入任务的 Label（可选，与 txn_id 二选一）。支持模糊匹配，自动匹配系统添加的前缀（如 insert_, load_）。示例：提供 "abc-123" 可匹配 "insert_abc-123"',
             },
             txn_id: {
               type: 'number',
