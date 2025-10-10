@@ -3101,6 +3101,883 @@ class StarRocksIngestionExpert {
   }
 
   /**
+   * 根据 Label 或 TxnId 查询导入任务状态并分析失败原因
+   * @param {Object} connection - 数据库连接
+   * @param {string} label - 导入任务的 Label (可选)
+   * @param {number} txnId - 事务 ID (可选)
+   * @param {string} dbName - 数据库名称 (可选，用于精确匹配)
+   * @param {boolean} includeRecommendations - 是否包含优化建议 (默认 true)
+   * @returns {Object} 导入任务详细信息和失败原因分析
+   */
+  async checkLoadJobStatus(
+    connection,
+    label = null,
+    txnId = null,
+    dbName = null,
+    includeRecommendations = true,
+  ) {
+    console.error(
+      `🔍 查询导入任务: label=${label || 'N/A'}, txn_id=${txnId || 'N/A'}`,
+    );
+    const startTime = Date.now();
+
+    try {
+      // 1. 参数验证
+      if (!label && !txnId) {
+        throw new Error('必须提供 label 或 txn_id 中的至少一个参数');
+      }
+
+      // 2. 构建查询条件
+      const conditions = [];
+      const params = [];
+
+      if (label) {
+        conditions.push('LABEL = ?');
+        params.push(label);
+      }
+
+      if (txnId) {
+        conditions.push('TXN_ID = ?');
+        params.push(txnId);
+      }
+
+      if (dbName) {
+        conditions.push('DB_NAME = ?');
+        params.push(dbName);
+      }
+
+      const whereClause = conditions.join(' AND ');
+
+      // 3. 先查询历史表 (_statistics_.loads_history)
+      let loadJob = null;
+      let dataSource = null;
+
+      try {
+        const historyQuery = `
+          SELECT
+            JOB_ID,
+            LABEL,
+            DB_NAME,
+            TABLE_NAME,
+            STATE,
+            PROGRESS,
+            TYPE,
+            PRIORITY,
+            SCAN_ROWS,
+            SCAN_BYTES,
+            FILTERED_ROWS,
+            UNSELECTED_ROWS,
+            SINK_ROWS,
+            ETL_INFO,
+            TASK_INFO,
+            CREATE_TIME,
+            ETL_START_TIME,
+            ETL_FINISH_TIME,
+            LOAD_START_TIME,
+            LOAD_COMMIT_TIME,
+            LOAD_FINISH_TIME,
+            JOB_DETAILS,
+            ERROR_MSG,
+            TRACKING_URL,
+            TRACKING_SQL,
+            REJECTED_RECORD_PATH,
+            REASON
+          FROM _statistics_.loads_history
+          WHERE ${whereClause}
+          ORDER BY CREATE_TIME DESC
+          LIMIT 1
+        `;
+
+        const [historyResults] = await connection.query(historyQuery, params);
+
+        if (historyResults && historyResults.length > 0) {
+          loadJob = historyResults[0];
+          dataSource = 'loads_history';
+          console.error(
+            `✅ 从 loads_history 找到任务: ${loadJob.LABEL}, 状态: ${loadJob.STATE}`,
+          );
+        }
+      } catch (error) {
+        console.warn(
+          `⚠️ 查询 loads_history 失败: ${error.message}，尝试查询 information_schema.loads`,
+        );
+      }
+
+      // 4. 如果历史表没找到，查询内存表 (information_schema.loads)
+      if (!loadJob) {
+        try {
+          const memoryQuery = `
+            SELECT
+              JOB_ID,
+              LABEL,
+              DB_NAME,
+              TABLE_NAME,
+              STATE,
+              PROGRESS,
+              TYPE,
+              PRIORITY,
+              SCAN_ROWS,
+              SCAN_BYTES,
+              FILTERED_ROWS,
+              UNSELECTED_ROWS,
+              SINK_ROWS,
+              ETL_INFO,
+              TASK_INFO,
+              CREATE_TIME,
+              ETL_START_TIME,
+              ETL_FINISH_TIME,
+              LOAD_START_TIME,
+              LOAD_FINISH_TIME,
+              JOB_DETAILS,
+              ERROR_MSG,
+              TRACKING_URL,
+              TRACKING_SQL,
+              REJECTED_RECORD_PATH,
+              REASON
+            FROM information_schema.loads
+            WHERE ${whereClause}
+            ORDER BY CREATE_TIME DESC
+            LIMIT 1
+          `;
+
+          const [memoryResults] = await connection.query(memoryQuery, params);
+
+          if (memoryResults && memoryResults.length > 0) {
+            loadJob = memoryResults[0];
+            dataSource = 'information_schema.loads';
+            console.error(
+              `✅ 从 information_schema.loads 找到任务: ${loadJob.LABEL}, 状态: ${loadJob.STATE}`,
+            );
+          }
+        } catch (error) {
+          console.error(
+            `❌ 查询 information_schema.loads 失败: ${error.message}`,
+          );
+        }
+      }
+
+      // 5. 如果都没找到
+      if (!loadJob) {
+        return {
+          status: 'not_found',
+          message: `未找到匹配的导入任务 (label=${label || 'N/A'}, txn_id=${txnId || 'N/A'})`,
+          search_criteria: {
+            label: label || null,
+            txn_id: txnId || null,
+            database_name: dbName || null,
+          },
+          analysis_duration_ms: Date.now() - startTime,
+        };
+      }
+
+      // 6. 计算性能指标
+      const metrics = this.calculateLoadJobMetrics(loadJob);
+
+      // 7. 分析失败原因（如果失败）
+      const failureAnalysis =
+        loadJob.STATE !== 'FINISHED'
+          ? this.analyzeLoadJobFailure(loadJob)
+          : null;
+
+      // 8. 生成建议（如果需要）
+      const recommendations =
+        includeRecommendations && loadJob.STATE !== 'FINISHED'
+          ? this.generateLoadJobRecommendations(loadJob, failureAnalysis)
+          : null;
+
+      // 9. 构建完整报告
+      const report = {
+        status: 'success',
+        data_source: dataSource,
+        job_info: {
+          job_id: loadJob.JOB_ID,
+          label: loadJob.LABEL,
+          database: loadJob.DB_NAME,
+          table: loadJob.TABLE_NAME,
+          state: loadJob.STATE,
+          type: loadJob.TYPE,
+          priority: loadJob.PRIORITY,
+          progress: loadJob.PROGRESS,
+        },
+        timing: {
+          create_time: loadJob.CREATE_TIME,
+          etl_start_time: loadJob.ETL_START_TIME,
+          etl_finish_time: loadJob.ETL_FINISH_TIME,
+          load_start_time: loadJob.LOAD_START_TIME,
+          load_commit_time: loadJob.LOAD_COMMIT_TIME,
+          load_finish_time: loadJob.LOAD_FINISH_TIME,
+          etl_duration_seconds: metrics.etl_duration_seconds,
+          load_duration_seconds: metrics.load_duration_seconds,
+          total_duration_seconds: metrics.total_duration_seconds,
+        },
+        data_stats: {
+          scan_rows: loadJob.SCAN_ROWS,
+          scan_bytes: loadJob.SCAN_BYTES,
+          scan_bytes_mb: metrics.scan_bytes_mb,
+          filtered_rows: loadJob.FILTERED_ROWS,
+          unselected_rows: loadJob.UNSELECTED_ROWS,
+          sink_rows: loadJob.SINK_ROWS,
+          filter_ratio: metrics.filter_ratio,
+        },
+        performance: {
+          throughput_mbps: metrics.throughput_mbps,
+          rows_per_second: metrics.rows_per_second,
+        },
+        error_info:
+          loadJob.STATE !== 'FINISHED'
+            ? {
+                error_msg: loadJob.ERROR_MSG || null,
+                reason: loadJob.REASON || null,
+                tracking_sql: loadJob.TRACKING_SQL || null,
+                tracking_url: loadJob.TRACKING_URL || null,
+                rejected_record_path: loadJob.REJECTED_RECORD_PATH || null,
+              }
+            : null,
+        failure_analysis: failureAnalysis,
+        recommendations: recommendations,
+        raw_details: {
+          etl_info: loadJob.ETL_INFO,
+          task_info: loadJob.TASK_INFO,
+          job_details: loadJob.JOB_DETAILS,
+        },
+        analysis_duration_ms: Date.now() - startTime,
+      };
+
+      console.error(
+        `✅ 分析完成，耗时 ${report.analysis_duration_ms}ms, 状态: ${loadJob.STATE}`,
+      );
+
+      return this.formatLoadJobStatusReport(report);
+    } catch (error) {
+      console.error(`❌ checkLoadJobStatus 失败: ${error.message}`);
+      return {
+        status: 'error',
+        message: `查询导入任务状态失败: ${error.message}`,
+        search_criteria: {
+          label: label || null,
+          txn_id: txnId || null,
+          database_name: dbName || null,
+        },
+        error: error.message,
+        analysis_duration_ms: Date.now() - startTime,
+      };
+    }
+  }
+
+  /**
+   * 计算导入任务的性能指标
+   */
+  calculateLoadJobMetrics(loadJob) {
+    const metrics = {
+      etl_duration_seconds: null,
+      load_duration_seconds: null,
+      total_duration_seconds: null,
+      scan_bytes_mb: 0,
+      throughput_mbps: null,
+      rows_per_second: null,
+      filter_ratio: null,
+    };
+
+    // 计算耗时
+    if (loadJob.ETL_START_TIME && loadJob.ETL_FINISH_TIME) {
+      const etlStart = new Date(loadJob.ETL_START_TIME);
+      const etlFinish = new Date(loadJob.ETL_FINISH_TIME);
+      metrics.etl_duration_seconds = (etlFinish - etlStart) / 1000;
+    }
+
+    if (loadJob.LOAD_START_TIME && loadJob.LOAD_FINISH_TIME) {
+      const loadStart = new Date(loadJob.LOAD_START_TIME);
+      const loadFinish = new Date(loadJob.LOAD_FINISH_TIME);
+      metrics.load_duration_seconds = (loadFinish - loadStart) / 1000;
+    }
+
+    if (loadJob.CREATE_TIME && loadJob.LOAD_FINISH_TIME) {
+      const createTime = new Date(loadJob.CREATE_TIME);
+      const finishTime = new Date(loadJob.LOAD_FINISH_TIME);
+      metrics.total_duration_seconds = (finishTime - createTime) / 1000;
+    }
+
+    // 计算数据量
+    if (loadJob.SCAN_BYTES) {
+      metrics.scan_bytes_mb = (loadJob.SCAN_BYTES / (1024 * 1024)).toFixed(2);
+    }
+
+    // 计算吞吐量
+    if (metrics.load_duration_seconds > 0 && loadJob.SCAN_BYTES) {
+      metrics.throughput_mbps =
+        loadJob.SCAN_BYTES / (1024 * 1024) / metrics.load_duration_seconds;
+    }
+
+    if (metrics.load_duration_seconds > 0 && loadJob.SCAN_ROWS) {
+      metrics.rows_per_second =
+        loadJob.SCAN_ROWS / metrics.load_duration_seconds;
+    }
+
+    // 计算过滤率
+    if (loadJob.SCAN_ROWS > 0) {
+      const filteredRows =
+        (loadJob.FILTERED_ROWS || 0) + (loadJob.UNSELECTED_ROWS || 0);
+      metrics.filter_ratio = (filteredRows / loadJob.SCAN_ROWS) * 100;
+    }
+
+    return metrics;
+  }
+
+  /**
+   * 分析导入任务失败原因
+   */
+  analyzeLoadJobFailure(loadJob) {
+    const errorMsg = (loadJob.ERROR_MSG || '').toLowerCase();
+    const reason = (loadJob.REASON || '').toLowerCase();
+    const state = loadJob.STATE;
+
+    const analysis = {
+      category: 'unknown',
+      root_cause: null,
+      details: [],
+      related_issues: [],
+    };
+
+    // 1. Timeout 相关
+    if (errorMsg.includes('timeout') || errorMsg.includes('reached timeout')) {
+      analysis.category = 'timeout';
+      analysis.root_cause = '导入任务超时';
+      analysis.details.push('任务执行时间超过了配置的超时阈值');
+
+      if (errorMsg.includes('reached timeout')) {
+        analysis.details.push('可能的原因: 资源不足、BRPC 延迟、线程池瓶颈');
+        analysis.related_issues.push(
+          '建议使用 analyze_reached_timeout 工具深度分析',
+        );
+      }
+
+      if (loadJob.TYPE === 'ROUTINE_LOAD') {
+        analysis.details.push('Routine Load 超时可能与消费速度、批次大小有关');
+      }
+    }
+
+    // 2. 资源不足
+    else if (
+      errorMsg.includes('memory') ||
+      errorMsg.includes('out of memory') ||
+      errorMsg.includes('no available') ||
+      errorMsg.includes('resource')
+    ) {
+      analysis.category = 'resource';
+      analysis.root_cause = '资源不足';
+
+      if (errorMsg.includes('memory')) {
+        analysis.details.push('内存不足，可能需要增加 BE 内存或减少导入并发');
+      }
+      if (errorMsg.includes('no available')) {
+        analysis.details.push('无可用资源，可能是 BE 节点不足或负载过高');
+      }
+    }
+
+    // 3. 数据质量问题
+    else if (
+      errorMsg.includes('column') ||
+      errorMsg.includes('type') ||
+      errorMsg.includes('format') ||
+      errorMsg.includes('parse')
+    ) {
+      analysis.category = 'data_quality';
+      analysis.root_cause = '数据格式或类型不匹配';
+      analysis.details.push('数据格式与表结构不匹配');
+
+      if (loadJob.FILTERED_ROWS > 0) {
+        analysis.details.push(
+          `已过滤 ${loadJob.FILTERED_ROWS} 行数据，请检查被过滤的数据`,
+        );
+      }
+
+      if (loadJob.REJECTED_RECORD_PATH) {
+        analysis.details.push(`错误数据路径: ${loadJob.REJECTED_RECORD_PATH}`);
+      }
+    }
+
+    // 4. 网络问题
+    else if (
+      errorMsg.includes('connect') ||
+      errorMsg.includes('network') ||
+      errorMsg.includes('broken pipe') ||
+      errorMsg.includes('connection reset')
+    ) {
+      analysis.category = 'network';
+      analysis.root_cause = '网络连接问题';
+      analysis.details.push('FE/BE 节点之间网络连接异常');
+    }
+
+    // 5. 文件问题 (Broker Load)
+    else if (
+      errorMsg.includes('file') ||
+      errorMsg.includes('path') ||
+      errorMsg.includes('not found')
+    ) {
+      analysis.category = 'file';
+      analysis.root_cause = '文件访问问题';
+      analysis.details.push('无法访问源文件，请检查文件路径和权限');
+    }
+
+    // 6. 事务问题
+    else if (errorMsg.includes('transaction') || errorMsg.includes('txn')) {
+      analysis.category = 'transaction';
+      analysis.root_cause = '事务处理异常';
+      analysis.details.push('事务提交或回滚过程中出现问题');
+    }
+
+    // 7. 配置问题
+    else if (errorMsg.includes('invalid') || errorMsg.includes('illegal')) {
+      analysis.category = 'configuration';
+      analysis.root_cause = '配置参数错误';
+      analysis.details.push('导入参数配置不正确');
+    }
+
+    // 8. 权限问题
+    else if (errorMsg.includes('permission') || errorMsg.includes('denied')) {
+      analysis.category = 'permission';
+      analysis.root_cause = '权限不足';
+      analysis.details.push('用户权限不足或文件访问权限不足');
+    }
+
+    // 9. CANCELLED 状态
+    else if (state === 'CANCELLED') {
+      analysis.category = 'cancelled';
+      analysis.root_cause = '任务被取消';
+      analysis.details.push('任务被用户或系统取消');
+
+      if (reason) {
+        analysis.details.push(`取消原因: ${loadJob.REASON}`);
+      }
+    }
+
+    // 10. 其他错误
+    else if (errorMsg) {
+      analysis.category = 'other';
+      analysis.root_cause = '其他错误';
+      analysis.details.push(loadJob.ERROR_MSG);
+    }
+
+    return analysis;
+  }
+
+  /**
+   * 生成导入任务的优化建议
+   */
+  generateLoadJobRecommendations(loadJob, failureAnalysis) {
+    const recommendations = [];
+
+    if (!failureAnalysis) {
+      return recommendations;
+    }
+
+    // 根据失败类别给出建议
+    switch (failureAnalysis.category) {
+      case 'timeout':
+        recommendations.push({
+          priority: 'high',
+          category: '超时问题',
+          suggestions: [
+            '使用 analyze_reached_timeout 工具进行深度分析',
+            '检查 BE 节点资源使用情况（CPU、IO、内存）',
+            '检查线程池状态（Async delta writer、Memtable flush）',
+            '如果是 BRPC 延迟问题，考虑增加 BE 节点或优化网络',
+            '临时解决方案：增加超时时间 (SET PROPERTY "timeout" = "7200")',
+          ],
+        });
+
+        if (loadJob.TYPE === 'ROUTINE_LOAD') {
+          recommendations.push({
+            priority: 'medium',
+            category: 'Routine Load 优化',
+            suggestions: [
+              '减少 desired_concurrent_number（降低并发）',
+              '增加 max_batch_interval（增加批次间隔）',
+              '减少 max_batch_rows（减少批次大小）',
+              '使用 check_routine_load_config 工具检查配置',
+            ],
+          });
+        }
+        break;
+
+      case 'resource':
+        recommendations.push({
+          priority: 'high',
+          category: '资源优化',
+          suggestions: [
+            '增加 BE 节点内存配置',
+            '减少并发导入任务数量',
+            '使用 analyze_memory 工具分析内存使用',
+            '检查是否有其他高负载任务',
+            '考虑在低峰期执行导入任务',
+          ],
+        });
+        break;
+
+      case 'data_quality':
+        recommendations.push({
+          priority: 'high',
+          category: '数据质量',
+          suggestions: [
+            '检查源数据格式是否与表结构匹配',
+            '查看被过滤的数据记录 (REJECTED_RECORD_PATH)',
+            '调整 max_filter_ratio 允许部分数据错误',
+            '使用 TRACKING_SQL 查看详细的列映射错误',
+            '验证数据类型转换规则',
+          ],
+        });
+
+        if (loadJob.TRACKING_SQL) {
+          recommendations.push({
+            priority: 'medium',
+            category: '调试信息',
+            suggestions: [
+              `执行 TRACKING_SQL 查看详细错误:\n${loadJob.TRACKING_SQL}`,
+            ],
+          });
+        }
+        break;
+
+      case 'network':
+        recommendations.push({
+          priority: 'high',
+          category: '网络问题',
+          suggestions: [
+            '检查 FE 和 BE 节点之间的网络连通性',
+            '查看 BE 日志中的网络错误',
+            '检查防火墙设置',
+            '验证节点间的端口是否正常开放',
+            '如果是云环境，检查安全组规则',
+          ],
+        });
+        break;
+
+      case 'file':
+        recommendations.push({
+          priority: 'high',
+          category: '文件访问',
+          suggestions: [
+            '验证文件路径是否正确',
+            '检查 Broker 配置是否正确',
+            '确认文件访问权限（HDFS/S3 凭证）',
+            '检查文件是否存在',
+            '验证文件格式是否正确',
+          ],
+        });
+        break;
+
+      case 'transaction':
+        recommendations.push({
+          priority: 'medium',
+          category: '事务问题',
+          suggestions: [
+            '检查是否有长时间未提交的事务',
+            '验证表是否被锁定',
+            '查看 FE 日志中的事务相关错误',
+            '考虑重试导入任务',
+          ],
+        });
+        break;
+
+      case 'configuration':
+        recommendations.push({
+          priority: 'high',
+          category: '配置检查',
+          suggestions: [
+            '检查导入语句的参数配置',
+            '验证列映射是否正确',
+            '确认分隔符、行分隔符等格式参数',
+            '参考官方文档验证参数有效性',
+          ],
+        });
+        break;
+
+      case 'permission':
+        recommendations.push({
+          priority: 'high',
+          category: '权限问题',
+          suggestions: [
+            '检查用户是否有表的 INSERT 权限',
+            '验证 Broker 访问文件的权限',
+            '确认 HDFS/S3 的访问凭证是否正确',
+            '联系管理员授予必要权限',
+          ],
+        });
+        break;
+
+      case 'cancelled':
+        recommendations.push({
+          priority: 'low',
+          category: '任务取消',
+          suggestions: [
+            '如果是手动取消，可以重新提交任务',
+            '如果是系统取消，检查取消原因',
+            '查看 FE 日志了解详细信息',
+          ],
+        });
+        break;
+
+      default:
+        recommendations.push({
+          priority: 'medium',
+          category: '通用建议',
+          suggestions: [
+            '查看完整的 ERROR_MSG 了解详细错误',
+            '检查 FE 和 BE 日志',
+            '如果有 TRACKING_SQL，执行它查看更多信息',
+            '联系 StarRocks 技术支持',
+          ],
+        });
+    }
+
+    // 通用建议
+    if (loadJob.TRACKING_SQL) {
+      recommendations.push({
+        priority: 'low',
+        category: '调试工具',
+        suggestions: [
+          '使用 TRACKING_SQL 查看详细错误信息',
+          '如果需要分析 Profile，使用 analyze_load_channel_profile 工具',
+        ],
+      });
+    }
+
+    return recommendations;
+  }
+
+  /**
+   * 格式化导入任务状态报告
+   */
+  formatLoadJobStatusReport(report) {
+    let output = '\n';
+    output +=
+      '═══════════════════════════════════════════════════════════════\n';
+    output += '          📊 导入任务状态分析报告\n';
+    output +=
+      '═══════════════════════════════════════════════════════════════\n\n';
+
+    // 基本信息
+    output += '【基本信息】\n';
+    output += `  • Label: ${report.job_info.label}\n`;
+    output += `  • Job ID: ${report.job_info.job_id || 'N/A'}\n`;
+    output += `  • 数据库: ${report.job_info.database}\n`;
+    output += `  • 表名: ${report.job_info.table}\n`;
+    output += `  • 导入类型: ${report.job_info.type}\n`;
+    output += `  • 状态: ${this.getStateEmoji(report.job_info.state)} ${report.job_info.state}\n`;
+    output += `  • 进度: ${report.job_info.progress || 'N/A'}\n`;
+    output += `  • 优先级: ${report.job_info.priority || 'N/A'}\n`;
+    output += `  • 数据源: ${report.data_source}\n`;
+    output += '\n';
+
+    // 时间信息
+    output += '【时间信息】\n';
+    output += `  • 创建时间: ${report.timing.create_time}\n`;
+    if (report.timing.etl_start_time) {
+      output += `  • ETL 开始: ${report.timing.etl_start_time}\n`;
+      output += `  • ETL 结束: ${report.timing.etl_finish_time || 'N/A'}\n`;
+      output += `  • ETL 耗时: ${this.formatDuration(report.timing.etl_duration_seconds)}\n`;
+    }
+    if (report.timing.load_start_time) {
+      output += `  • 导入开始: ${report.timing.load_start_time}\n`;
+      output += `  • 导入提交: ${report.timing.load_commit_time || 'N/A'}\n`;
+      output += `  • 导入完成: ${report.timing.load_finish_time || 'N/A'}\n`;
+      output += `  • 导入耗时: ${this.formatDuration(report.timing.load_duration_seconds)}\n`;
+    }
+    if (report.timing.total_duration_seconds) {
+      output += `  • 总耗时: ${this.formatDuration(report.timing.total_duration_seconds)}\n`;
+    }
+    output += '\n';
+
+    // 数据统计
+    output += '【数据统计】\n';
+    output += `  • 扫描行数: ${this.formatNumber(report.data_stats.scan_rows)}\n`;
+    output += `  • 扫描字节: ${this.formatBytes(report.data_stats.scan_bytes)} (${report.data_stats.scan_bytes_mb} MB)\n`;
+    output += `  • 导入行数: ${this.formatNumber(report.data_stats.sink_rows)}\n`;
+    output += `  • 过滤行数: ${this.formatNumber(report.data_stats.filtered_rows)}\n`;
+    output += `  • 未选择行数: ${this.formatNumber(report.data_stats.unselected_rows)}\n`;
+    if (report.data_stats.filter_ratio !== null) {
+      output += `  • 过滤率: ${report.data_stats.filter_ratio.toFixed(2)}%\n`;
+    }
+    output += '\n';
+
+    // 性能指标
+    if (
+      report.performance.throughput_mbps ||
+      report.performance.rows_per_second
+    ) {
+      output += '【性能指标】\n';
+      if (report.performance.throughput_mbps) {
+        output += `  • 吞吐量: ${report.performance.throughput_mbps.toFixed(2)} MB/s\n`;
+      }
+      if (report.performance.rows_per_second) {
+        output += `  • 导入速度: ${this.formatNumber(Math.round(report.performance.rows_per_second))} 行/秒\n`;
+      }
+      output += '\n';
+    }
+
+    // 错误信息
+    if (report.error_info) {
+      output += '【错误信息】\n';
+      if (report.error_info.error_msg) {
+        output += `  ❌ 错误消息:\n`;
+        output += this.indentText(report.error_info.error_msg, '     ');
+        output += '\n';
+      }
+      if (report.error_info.reason) {
+        output += `  📋 失败原因:\n`;
+        output += this.indentText(report.error_info.reason, '     ');
+        output += '\n';
+      }
+      if (report.error_info.rejected_record_path) {
+        output += `  📁 错误数据路径: ${report.error_info.rejected_record_path}\n`;
+      }
+      if (report.error_info.tracking_url) {
+        output += `  🔗 跟踪 URL: ${report.error_info.tracking_url}\n`;
+      }
+      if (report.error_info.tracking_sql) {
+        output += `  🔍 跟踪 SQL:\n`;
+        output += this.indentText(report.error_info.tracking_sql, '     ');
+        output += '\n';
+      }
+      output += '\n';
+    }
+
+    // 失败原因分析
+    if (report.failure_analysis) {
+      output += '【失败原因分析】\n';
+      output += `  • 分类: ${this.getCategoryEmoji(report.failure_analysis.category)} ${report.failure_analysis.category.toUpperCase()}\n`;
+      output += `  • 根本原因: ${report.failure_analysis.root_cause}\n`;
+      if (report.failure_analysis.details.length > 0) {
+        output += `  • 详细分析:\n`;
+        report.failure_analysis.details.forEach((detail) => {
+          output += `    - ${detail}\n`;
+        });
+      }
+      if (report.failure_analysis.related_issues.length > 0) {
+        output += `  • 相关问题:\n`;
+        report.failure_analysis.related_issues.forEach((issue) => {
+          output += `    - ${issue}\n`;
+        });
+      }
+      output += '\n';
+    }
+
+    // 优化建议
+    if (report.recommendations && report.recommendations.length > 0) {
+      output += '【优化建议】\n';
+      report.recommendations.forEach((rec, index) => {
+        output += `  ${index + 1}. ${rec.category} [${rec.priority.toUpperCase()}]\n`;
+        rec.suggestions.forEach((suggestion) => {
+          output += `     ${this.getPriorityEmoji(rec.priority)} ${suggestion}\n`;
+        });
+        if (index < report.recommendations.length - 1) {
+          output += '\n';
+        }
+      });
+      output += '\n';
+    }
+
+    // 元数据
+    output +=
+      '───────────────────────────────────────────────────────────────\n';
+    output += `分析耗时: ${report.analysis_duration_ms}ms\n`;
+    output +=
+      '═══════════════════════════════════════════════════════════════\n';
+
+    return output;
+  }
+
+  /**
+   * 获取状态表情符号
+   */
+  getStateEmoji(state) {
+    const emojiMap = {
+      FINISHED: '✅',
+      LOADING: '⏳',
+      PENDING: '⏸️',
+      CANCELLED: '❌',
+      UNKNOWN: '❓',
+    };
+    return emojiMap[state] || '❓';
+  }
+
+  /**
+   * 获取分类表情符号
+   */
+  getCategoryEmoji(category) {
+    const emojiMap = {
+      timeout: '⏱️',
+      resource: '💾',
+      data_quality: '📊',
+      network: '🌐',
+      file: '📁',
+      transaction: '🔄',
+      configuration: '⚙️',
+      permission: '🔒',
+      cancelled: '🚫',
+      other: '❓',
+      unknown: '❓',
+    };
+    return emojiMap[category] || '❓';
+  }
+
+  /**
+   * 获取优先级表情符号
+   */
+  getPriorityEmoji(priority) {
+    const emojiMap = {
+      high: '🔴',
+      medium: '🟡',
+      low: '🟢',
+    };
+    return emojiMap[priority] || '⚪';
+  }
+
+  /**
+   * 格式化时长
+   */
+  formatDuration(seconds) {
+    if (seconds === null || seconds === undefined) {
+      return 'N/A';
+    }
+
+    if (seconds < 60) {
+      return `${seconds.toFixed(2)}秒`;
+    } else if (seconds < 3600) {
+      const minutes = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return `${minutes}分${secs.toFixed(0)}秒`;
+    } else {
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      return `${hours}小时${minutes}分`;
+    }
+  }
+
+  /**
+   * 格式化数字
+   */
+  formatNumber(num) {
+    if (num === null || num === undefined) {
+      return 'N/A';
+    }
+    return num.toLocaleString();
+  }
+
+  /**
+   * 缩进文本
+   */
+  indentText(text, indent) {
+    if (!text) return '';
+    return (
+      text
+        .split('\n')
+        .map((line) => indent + line)
+        .join('\n') + '\n'
+    );
+  }
+
+  /**
    * 检查表的 Stream Load 任务
    * @param {Object} connection - 数据库连接
    * @param {string} dbName - 数据库名称
@@ -3991,6 +4868,58 @@ class StarRocksIngestionExpert {
    */
   getToolHandlers() {
     return {
+      check_load_job_status: async (args, context) => {
+        const connection = context.connection;
+        const result = await this.checkLoadJobStatus(
+          connection,
+          args.label || null,
+          args.txn_id || null,
+          args.database_name || null,
+          args.include_recommendations !== false,
+        );
+
+        // 如果返回的是格式化的字符串报告，直接使用
+        let report;
+        if (typeof result === 'string') {
+          report = result;
+        } else if (result.status === 'not_found') {
+          report = `❌ ${result.message}\n`;
+          report += `搜索条件:\n`;
+          if (result.search_criteria.label) {
+            report += `  • Label: ${result.search_criteria.label}\n`;
+          }
+          if (result.search_criteria.txn_id) {
+            report += `  • TxnId: ${result.search_criteria.txn_id}\n`;
+          }
+          if (result.search_criteria.database_name) {
+            report += `  • Database: ${result.search_criteria.database_name}\n`;
+          }
+          report += `\n💡 提示: 请检查 Label 或 TxnId 是否正确\n`;
+          report += `💡 提示: 可以通过 information_schema.loads 或 _statistics_.loads_history 查看所有导入任务\n`;
+        } else if (result.status === 'error') {
+          report = `❌ ${result.message}\n`;
+          report += `错误详情: ${result.error}\n`;
+          report += `耗时: ${result.analysis_duration_ms}ms`;
+        } else {
+          // result 已经是格式化的报告
+          report = result;
+        }
+
+        // 添加输出指示，引导 LLM 原样输出
+        const outputInstruction =
+          '📋 以下是预格式化的导入任务状态分析报告，请**原样输出**完整内容，不要总结或重新格式化：\n\n```\n';
+        const reportEnd = '\n```\n';
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: outputInstruction + report + reportEnd,
+            },
+          ],
+        };
+      },
+
       analyze_table_import_frequency: async (args, context) => {
         const connection = context.connection;
         const result = await this.analyzeTableImportFrequency(
@@ -5791,6 +6720,61 @@ class StarRocksIngestionExpert {
    */
   getTools() {
     return [
+      {
+        name: 'check_load_job_status',
+        description:
+          '🔍 导入任务状态查询与失败分析 - 根据 Label 或 TxnId 查询导入任务状态，分析失败原因并提供解决方案\n\n' +
+          '功能概述：\n' +
+          '• 支持通过 Label 或 TxnId 精准查询导入任务\n' +
+          '• 混合查询历史表和内存表，确保数据完整性\n' +
+          '• 展示任务详细信息（状态、耗时、数据量、性能指标）\n' +
+          '• 智能分析失败原因（超时、资源不足、数据质量等）\n' +
+          '• 提供针对性的优化建议和解决方案\n\n' +
+          '适用场景：\n' +
+          '• 查询导入任务的执行状态和结果\n' +
+          '• 诊断导入失败的根本原因\n' +
+          '• 获取导入性能数据（吞吐量、行数、耗时）\n' +
+          '• 查看错误信息和 TRACKING_SQL\n' +
+          '• 获取针对性的优化建议\n\n' +
+          '失败分类覆盖：\n' +
+          '1. 超时问题 (Timeout/Reached Timeout)\n' +
+          '2. 资源不足 (Memory/Resource)\n' +
+          '3. 数据质量 (Column/Type/Format)\n' +
+          '4. 网络问题 (Connection/Network)\n' +
+          '5. 文件访问 (File/Path/Not Found)\n' +
+          '6. 事务异常 (Transaction/Txn)\n' +
+          '7. 配置错误 (Invalid/Illegal)\n' +
+          '8. 权限问题 (Permission/Denied)\n\n' +
+          '优化建议包含：\n' +
+          '• 具体的解决步骤和配置调整\n' +
+          '• 相关工具推荐（如 analyze_reached_timeout）\n' +
+          '• 调试信息（TRACKING_SQL、错误数据路径）\n' +
+          '• 优先级分类（高/中/低）\n\n' +
+          '⚠️ 输出指示：此工具返回预格式化的详细报告，请**完整、原样**输出所有内容。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            label: {
+              type: 'string',
+              description: '导入任务的 Label（可选，与 txn_id 二选一）',
+            },
+            txn_id: {
+              type: 'number',
+              description: '导入任务的事务 ID（可选，与 label 二选一）',
+            },
+            database_name: {
+              type: 'string',
+              description: '数据库名称（可选，用于精确匹配，提高查询准确性）',
+            },
+            include_recommendations: {
+              type: 'boolean',
+              description: '是否包含优化建议（默认 true）',
+              default: true,
+            },
+          },
+          required: [],
+        },
+      },
       {
         name: 'analyze_table_import_frequency',
         description:
