@@ -3396,6 +3396,7 @@ class StarRocksIngestionExpert {
 
   /**
    * 分析导入任务失败原因
+   * 使用优先级匹配策略，确保最相关的错误类别被识别
    */
   analyzeLoadJobFailure(loadJob) {
     const errorMsg = (loadJob.ERROR_MSG || '').toLowerCase();
@@ -3408,7 +3409,8 @@ class StarRocksIngestionExpert {
       related_issues: [],
     };
 
-    // 1. Timeout 相关
+    // 优先级匹配：从高优先级到低优先级
+    // 优先级 1: Timeout 相关（最高优先级，因为 timeout 是明确的失败原因）
     if (errorMsg.includes('timeout') || errorMsg.includes('reached timeout')) {
       analysis.category = 'timeout';
       analysis.root_cause = '导入任务超时';
@@ -3424,32 +3426,92 @@ class StarRocksIngestionExpert {
       if (loadJob.TYPE === 'ROUTINE_LOAD') {
         analysis.details.push('Routine Load 超时可能与消费速度、批次大小有关');
       }
+
+      return analysis;
     }
 
-    // 2. 资源不足
-    else if (
-      errorMsg.includes('memory') ||
+    // 优先级 2: 资源不足（明确的系统资源问题）
+    if (
       errorMsg.includes('out of memory') ||
-      errorMsg.includes('no available') ||
-      errorMsg.includes('resource')
+      errorMsg.includes('oom') ||
+      errorMsg.includes('no available')
     ) {
       analysis.category = 'resource';
       analysis.root_cause = '资源不足';
 
-      if (errorMsg.includes('memory')) {
+      if (errorMsg.includes('memory') || errorMsg.includes('oom')) {
         analysis.details.push('内存不足，可能需要增加 BE 内存或减少导入并发');
       }
       if (errorMsg.includes('no available')) {
         analysis.details.push('无可用资源，可能是 BE 节点不足或负载过高');
       }
+
+      return analysis;
     }
 
-    // 3. 数据质量问题
-    else if (
+    // 优先级 3: 网络连接问题（明确的连接失败）
+    if (
+      errorMsg.includes('connection refused') ||
+      errorMsg.includes('connection reset') ||
+      errorMsg.includes('broken pipe') ||
+      errorMsg.includes('connect failed')
+    ) {
+      analysis.category = 'network';
+      analysis.root_cause = '网络连接问题';
+      analysis.details.push('FE/BE 节点之间网络连接异常');
+
+      return analysis;
+    }
+
+    // 优先级 4: 文件访问问题（Broker Load 相关）
+    if (
+      errorMsg.includes('file not found') ||
+      errorMsg.includes('path not found') ||
+      errorMsg.includes('no such file')
+    ) {
+      analysis.category = 'file';
+      analysis.root_cause = '文件访问问题';
+      analysis.details.push('无法访问源文件，请检查文件路径和权限');
+
+      return analysis;
+    }
+
+    // 优先级 5: 权限问题（明确的权限错误）
+    if (
+      errorMsg.includes('permission denied') ||
+      errorMsg.includes('access denied')
+    ) {
+      analysis.category = 'permission';
+      analysis.root_cause = '权限不足';
+      analysis.details.push('用户权限不足或文件访问权限不足');
+
+      return analysis;
+    }
+
+    // 优先级 6: 事务问题
+    if (errorMsg.includes('transaction') || errorMsg.includes('txn')) {
+      analysis.category = 'transaction';
+      analysis.root_cause = '事务处理异常';
+      analysis.details.push('事务提交或回滚过程中出现问题');
+
+      return analysis;
+    }
+
+    // 优先级 7: 配置错误（明确的参数问题）
+    if (errorMsg.includes('invalid') || errorMsg.includes('illegal')) {
+      analysis.category = 'configuration';
+      analysis.root_cause = '配置参数错误';
+      analysis.details.push('导入参数配置不正确');
+
+      return analysis;
+    }
+
+    // 优先级 8: 数据质量问题（较低优先级，因为关键词容易误匹配）
+    if (
       errorMsg.includes('column') ||
-      errorMsg.includes('type') ||
-      errorMsg.includes('format') ||
-      errorMsg.includes('parse')
+      errorMsg.includes('type mismatch') ||
+      errorMsg.includes('parse error') ||
+      errorMsg.includes('format error')
     ) {
       analysis.category = 'data_quality';
       analysis.root_cause = '数据格式或类型不匹配';
@@ -3464,54 +3526,12 @@ class StarRocksIngestionExpert {
       if (loadJob.REJECTED_RECORD_PATH) {
         analysis.details.push(`错误数据路径: ${loadJob.REJECTED_RECORD_PATH}`);
       }
+
+      return analysis;
     }
 
-    // 4. 网络问题
-    else if (
-      errorMsg.includes('connect') ||
-      errorMsg.includes('network') ||
-      errorMsg.includes('broken pipe') ||
-      errorMsg.includes('connection reset')
-    ) {
-      analysis.category = 'network';
-      analysis.root_cause = '网络连接问题';
-      analysis.details.push('FE/BE 节点之间网络连接异常');
-    }
-
-    // 5. 文件问题 (Broker Load)
-    else if (
-      errorMsg.includes('file') ||
-      errorMsg.includes('path') ||
-      errorMsg.includes('not found')
-    ) {
-      analysis.category = 'file';
-      analysis.root_cause = '文件访问问题';
-      analysis.details.push('无法访问源文件，请检查文件路径和权限');
-    }
-
-    // 6. 事务问题
-    else if (errorMsg.includes('transaction') || errorMsg.includes('txn')) {
-      analysis.category = 'transaction';
-      analysis.root_cause = '事务处理异常';
-      analysis.details.push('事务提交或回滚过程中出现问题');
-    }
-
-    // 7. 配置问题
-    else if (errorMsg.includes('invalid') || errorMsg.includes('illegal')) {
-      analysis.category = 'configuration';
-      analysis.root_cause = '配置参数错误';
-      analysis.details.push('导入参数配置不正确');
-    }
-
-    // 8. 权限问题
-    else if (errorMsg.includes('permission') || errorMsg.includes('denied')) {
-      analysis.category = 'permission';
-      analysis.root_cause = '权限不足';
-      analysis.details.push('用户权限不足或文件访问权限不足');
-    }
-
-    // 9. CANCELLED 状态
-    else if (state === 'CANCELLED') {
+    // 优先级 9: CANCELLED 状态（最后检查状态）
+    if (state === 'CANCELLED') {
       analysis.category = 'cancelled';
       analysis.root_cause = '任务被取消';
       analysis.details.push('任务被用户或系统取消');
@@ -3519,13 +3539,17 @@ class StarRocksIngestionExpert {
       if (errorMsg) {
         analysis.details.push(`错误信息: ${loadJob.ERROR_MSG}`);
       }
+
+      return analysis;
     }
 
-    // 10. 其他错误
-    else if (errorMsg) {
+    // 优先级 10: 其他错误（兜底）
+    if (errorMsg) {
       analysis.category = 'other';
       analysis.root_cause = '其他错误';
       analysis.details.push(loadJob.ERROR_MSG);
+
+      return analysis;
     }
 
     return analysis;
