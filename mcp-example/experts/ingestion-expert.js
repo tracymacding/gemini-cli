@@ -3156,33 +3156,26 @@ class StarRocksIngestionExpert {
       try {
         const historyQuery = `
           SELECT
-            JOB_ID,
-            LABEL,
-            DB_NAME,
-            TABLE_NAME,
-            STATE,
-            PROGRESS,
-            TYPE,
-            PRIORITY,
-            SCAN_ROWS,
-            SCAN_BYTES,
-            FILTERED_ROWS,
-            UNSELECTED_ROWS,
-            SINK_ROWS,
-            ETL_INFO,
-            TASK_INFO,
-            CREATE_TIME,
-            ETL_START_TIME,
-            ETL_FINISH_TIME,
-            LOAD_START_TIME,
-            LOAD_COMMIT_TIME,
-            LOAD_FINISH_TIME,
-            JOB_DETAILS,
-            ERROR_MSG,
-            TRACKING_URL,
-            TRACKING_SQL,
-            REJECTED_RECORD_PATH,
-            REASON
+            job_id as JOB_ID,
+            label as LABEL,
+            db_name as DB_NAME,
+            table_name as TABLE_NAME,
+            state as STATE,
+            progress as PROGRESS,
+            type as TYPE,
+            priority as PRIORITY,
+            scan_rows as SCAN_ROWS,
+            scan_bytes as SCAN_BYTES,
+            filtered_rows as FILTERED_ROWS,
+            unselected_rows as UNSELECTED_ROWS,
+            sink_rows as SINK_ROWS,
+            create_time as CREATE_TIME,
+            load_start_time as LOAD_START_TIME,
+            load_commit_time as LOAD_COMMIT_TIME,
+            load_finish_time as LOAD_FINISH_TIME,
+            error_msg as ERROR_MSG,
+            tracking_sql as TRACKING_SQL,
+            rejected_record_path as REJECTED_RECORD_PATH
           FROM _statistics_.loads_history
           WHERE ${whereClause}
           ORDER BY CREATE_TIME DESC
@@ -3222,19 +3215,13 @@ class StarRocksIngestionExpert {
               FILTERED_ROWS,
               UNSELECTED_ROWS,
               SINK_ROWS,
-              ETL_INFO,
-              TASK_INFO,
               CREATE_TIME,
-              ETL_START_TIME,
-              ETL_FINISH_TIME,
               LOAD_START_TIME,
+              LOAD_COMMIT_TIME,
               LOAD_FINISH_TIME,
-              JOB_DETAILS,
               ERROR_MSG,
-              TRACKING_URL,
               TRACKING_SQL,
-              REJECTED_RECORD_PATH,
-              REASON
+              REJECTED_RECORD_PATH
             FROM information_schema.loads
             WHERE ${whereClause}
             ORDER BY CREATE_TIME DESC
@@ -3302,12 +3289,9 @@ class StarRocksIngestionExpert {
         },
         timing: {
           create_time: loadJob.CREATE_TIME,
-          etl_start_time: loadJob.ETL_START_TIME,
-          etl_finish_time: loadJob.ETL_FINISH_TIME,
           load_start_time: loadJob.LOAD_START_TIME,
           load_commit_time: loadJob.LOAD_COMMIT_TIME,
           load_finish_time: loadJob.LOAD_FINISH_TIME,
-          etl_duration_seconds: metrics.etl_duration_seconds,
           load_duration_seconds: metrics.load_duration_seconds,
           total_duration_seconds: metrics.total_duration_seconds,
         },
@@ -3328,19 +3312,12 @@ class StarRocksIngestionExpert {
           loadJob.STATE !== 'FINISHED'
             ? {
                 error_msg: loadJob.ERROR_MSG || null,
-                reason: loadJob.REASON || null,
                 tracking_sql: loadJob.TRACKING_SQL || null,
-                tracking_url: loadJob.TRACKING_URL || null,
                 rejected_record_path: loadJob.REJECTED_RECORD_PATH || null,
               }
             : null,
         failure_analysis: failureAnalysis,
         recommendations: recommendations,
-        raw_details: {
-          etl_info: loadJob.ETL_INFO,
-          task_info: loadJob.TASK_INFO,
-          job_details: loadJob.JOB_DETAILS,
-        },
         analysis_duration_ms: Date.now() - startTime,
       };
 
@@ -3370,7 +3347,6 @@ class StarRocksIngestionExpert {
    */
   calculateLoadJobMetrics(loadJob) {
     const metrics = {
-      etl_duration_seconds: null,
       load_duration_seconds: null,
       total_duration_seconds: null,
       scan_bytes_mb: 0,
@@ -3380,12 +3356,6 @@ class StarRocksIngestionExpert {
     };
 
     // 计算耗时
-    if (loadJob.ETL_START_TIME && loadJob.ETL_FINISH_TIME) {
-      const etlStart = new Date(loadJob.ETL_START_TIME);
-      const etlFinish = new Date(loadJob.ETL_FINISH_TIME);
-      metrics.etl_duration_seconds = (etlFinish - etlStart) / 1000;
-    }
-
     if (loadJob.LOAD_START_TIME && loadJob.LOAD_FINISH_TIME) {
       const loadStart = new Date(loadJob.LOAD_START_TIME);
       const loadFinish = new Date(loadJob.LOAD_FINISH_TIME);
@@ -3429,7 +3399,6 @@ class StarRocksIngestionExpert {
    */
   analyzeLoadJobFailure(loadJob) {
     const errorMsg = (loadJob.ERROR_MSG || '').toLowerCase();
-    const reason = (loadJob.REASON || '').toLowerCase();
     const state = loadJob.STATE;
 
     const analysis = {
@@ -3547,8 +3516,8 @@ class StarRocksIngestionExpert {
       analysis.root_cause = '任务被取消';
       analysis.details.push('任务被用户或系统取消');
 
-      if (reason) {
-        analysis.details.push(`取消原因: ${loadJob.REASON}`);
+      if (errorMsg) {
+        analysis.details.push(`错误信息: ${loadJob.ERROR_MSG}`);
       }
     }
 
@@ -3773,11 +3742,6 @@ class StarRocksIngestionExpert {
     // 时间信息
     output += '【时间信息】\n';
     output += `  • 创建时间: ${report.timing.create_time}\n`;
-    if (report.timing.etl_start_time) {
-      output += `  • ETL 开始: ${report.timing.etl_start_time}\n`;
-      output += `  • ETL 结束: ${report.timing.etl_finish_time || 'N/A'}\n`;
-      output += `  • ETL 耗时: ${this.formatDuration(report.timing.etl_duration_seconds)}\n`;
-    }
     if (report.timing.load_start_time) {
       output += `  • 导入开始: ${report.timing.load_start_time}\n`;
       output += `  • 导入提交: ${report.timing.load_commit_time || 'N/A'}\n`;
@@ -3824,16 +3788,8 @@ class StarRocksIngestionExpert {
         output += this.indentText(report.error_info.error_msg, '     ');
         output += '\n';
       }
-      if (report.error_info.reason) {
-        output += `  📋 失败原因:\n`;
-        output += this.indentText(report.error_info.reason, '     ');
-        output += '\n';
-      }
       if (report.error_info.rejected_record_path) {
         output += `  📁 错误数据路径: ${report.error_info.rejected_record_path}\n`;
-      }
-      if (report.error_info.tracking_url) {
-        output += `  🔗 跟踪 URL: ${report.error_info.tracking_url}\n`;
       }
       if (report.error_info.tracking_sql) {
         output += `  🔍 跟踪 SQL:\n`;
