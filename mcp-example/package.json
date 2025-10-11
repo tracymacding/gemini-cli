@@ -7,7 +7,11 @@
   "scripts": {
     "start": "node index-expert-enhanced.js",
     "start:http": "node index-expert-http.js",
+    "start:http-remote": "node index-expert-http-remote.js",
+    "start:agent": "node local-agent.js",
     "dev": "nodemon index-expert-http.js",
+    "dev:remote": "nodemon index-expert-http-remote.js",
+    "dev:agent": "nodemon local-agent.js",
     "test": "echo \"No tests yet\" && exit 0"
   },
   "keywords": [
