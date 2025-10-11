@@ -1,1 +1,33 @@
-{"type": "module"}
+{
+  "name": "starrocks-mcp-server",
+  "version": "2.0.0",
+  "description": "StarRocks Expert System MCP Server with HTTP/SSE support",
+  "type": "module",
+  "main": "index-expert-enhanced.js",
+  "scripts": {
+    "start": "node index-expert-enhanced.js",
+    "start:http": "node index-expert-http.js",
+    "dev": "nodemon index-expert-http.js",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "keywords": [
+    "starrocks",
+    "mcp",
+    "model-context-protocol",
+    "database",
+    "expert-system"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "express": "^4.21.2",
+    "mysql2": "^3.11.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
