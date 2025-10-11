@@ -35,14 +35,24 @@
 
 ## 参数说明
 
-| 参数名                    | 类型    | 必需 | 说明                                 |
-| ------------------------- | ------- | ---- | ------------------------------------ |
-| `label`                   | string  | 否   | 导入任务的 Label（与 txn_id 二选一） |
-| `txn_id`                  | number  | 否   | 导入任务的事务 ID（与 label 二选一） |
-| `database_name`           | string  | 否   | 数据库名称（用于精确匹配）           |
-| `include_recommendations` | boolean | 否   | 是否包含优化建议（默认 true）        |
+| 参数名                    | 类型    | 必需 | 说明                                                                                                                                                                                |
+| ------------------------- | ------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `label`                   | string  | 否   | 导入任务的 Label（与 txn_id 二选一）                                                                                                                                                |
+| `txn_id`                  | number  | 否   | 导入任务的事务 ID（与 label 二选一）                                                                                                                                                |
+| `database_name`           | string  | 否   | 数据库名称（用于精确匹配）                                                                                                                                                          |
+| `include_recommendations` | boolean | 否   | 是否包含优化建议（默认 true）                                                                                                                                                       |
+| `use_llm_analysis`        | boolean | 否   | 是否使用 LLM 智能分析（默认 **true**）。**支持多种 LLM**：DeepSeek (优先)、OpenAI、Gemini。自动检测环境变量并选择可用的 API。会增加 1-3 秒响应时间。设置为 false 可使用快速规则匹配 |
 
-⚠️ **注意**: `label` 和 `txn_id` 必须提供至少一个
+⚠️ **注意**:
+
+- `label` 和 `txn_id` 必须提供至少一个
+- **默认启用 LLM 分析**，支持以下 LLM API（按优先级排序）：
+  1. **DeepSeek** - 设置 `DEEPSEEK_API_KEY` 或 `DEEPSEEK_KEY`
+  2. **OpenAI** - 设置 `OPENAI_API_KEY`
+  3. **Gemini** - 设置 `GEMINI_API_KEY` 或 `GOOGLE_API_KEY`
+- 自动检测可用的 API Key 并选择最优先的 LLM
+- 如果没有配置任何 API Key 或调用失败，会自动回退到规则匹配
+- 如需快速分析，可设置 `use_llm_analysis: false`
 
 ### Label 模糊匹配说明
 
@@ -131,6 +141,68 @@
 {
   "label": "xxx",
   "include_recommendations": false
+}
+```
+
+### 示例 5: LLM 智能分析（默认） ⭐
+
+```bash
+# 默认启用 LLM 分析，支持多种 LLM
+# 方式 1: 使用 DeepSeek (推荐，优先级最高)
+export DEEPSEEK_API_KEY="your-deepseek-key"
+./bundle/gemini.js -m deepseek:deepseek-chat -p "分析 label xxx 的失败原因"
+
+# 方式 2: 使用 OpenAI
+export OPENAI_API_KEY="your-openai-key"
+./bundle/gemini.js -m deepseek:deepseek-chat -p "分析 label xxx 的失败原因"
+
+# 方式 3: 使用 Gemini
+export GEMINI_API_KEY="your-gemini-key"
+./bundle/gemini.js -m deepseek:deepseek-chat -p "分析 label xxx 的失败原因"
+```
+
+工具参数（默认启用 LLM）：
+
+```json
+{
+  "label": "xxx"
+  // use_llm_analysis 默认为 true，无需显式设置
+}
+```
+
+**LLM 分析的优势**：
+
+- 🎯 更准确的失败原因识别，避免关键词误判（如 txn_id 不会被误判为事务问题）
+- 📊 基于上下文的智能分类
+- 💡 更详细的根因分析
+- 🔧 更针对性的建议
+- 🔄 支持多种 LLM，自动选择可用的 API
+
+**支持的 LLM（按优先级）**：
+
+1. **DeepSeek** - 高性价比，推荐使用
+2. **OpenAI** - GPT-4o-mini，稳定可靠
+3. **Gemini** - Google Gemini 2.0 Flash
+
+**注意事项**：
+
+- 自动检测并使用配置的 API Key
+- 会增加 1-3 秒的响应时间（调用 API）
+- 如果所有 API 都不可用或调用失败，会自动 fallback 到快速规则匹配
+
+### 示例 6: 禁用 LLM 使用快速规则匹配
+
+```bash
+# 如需快速响应，可禁用 LLM 分析
+./bundle/gemini.js -m deepseek:deepseek-chat -p "快速分析 label xxx，不使用 LLM"
+```
+
+工具参数：
+
+```json
+{
+  "label": "xxx",
+  "use_llm_analysis": false
 }
 ```
 
@@ -398,12 +470,43 @@ filter_ratio = ((filtered_rows + unselected_rows) / scan_rows) * 100;
 
 ## 更新日志
 
+### v1.5.0 (2025-01-11)
+
+- ✅ **支持多种 LLM**：新增 DeepSeek 和 OpenAI 支持，不再限制于 Gemini
+- ✅ 智能 API 选择：自动检测环境变量，按优先级选择可用的 LLM（DeepSeek > OpenAI > Gemini）
+- ✅ 环境变量支持：`DEEPSEEK_API_KEY` / `DEEPSEEK_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`
+- ✅ 无缝 fallback：任一 LLM 不可用时自动尝试下一个，最后回退到规则匹配
+- ✅ 更新文档，说明多 LLM 支持和优先级
+
+### v1.4.0 (2025-01-11)
+
+- ✅ **默认启用 LLM 分析**：将 `use_llm_analysis` 默认值改为 `true`，提供更准确的失败原因分析
+- ✅ 自动降级机制：如果未配置 API Key 或调用失败，自动回退到规则匹配
+- ✅ 更新文档和示例，说明默认行为
+
+### v1.3.0 (2025-01-11)
+
+- ✅ **LLM 智能分析**：新增 `use_llm_analysis` 参数，支持使用 Gemini API 进行更准确的失败原因分析
+- ✅ 优先级匹配策略：改进规则匹配逻辑，按优先级从高到低匹配，避免误分类
+- ✅ 自动 fallback 机制：LLM 分析失败时自动回退到规则匹配
+- ✅ 支持环境变量配置：`GEMINI_API_KEY` 或 `GOOGLE_API_KEY`
+- ✅ 更新工具文档，添加 LLM 分析使用说明
+
+### v1.2.0 (2025-01-11)
+
+- ✅ **精确关键词匹配**：改进失败分析关键词，避免误判
+  - data_quality: `format` → `format error`
+  - network: `connect` → `connection refused/reset`
+  - file: `file` → `file not found`
+  - permission: `permission` → `permission denied`
+- ✅ 优先级匹配策略：timeout 最高优先级，确保不被误分类
+
 ### v1.1.0 (2025-01-11)
 
 - ✅ **Label 模糊匹配**：改进 Label 查询逻辑，支持自动匹配系统添加的前缀
 - ✅ 查询方式从 `LABEL = ?` 改为 `LABEL LIKE '%?'`
 - ✅ 用户无需关心系统前缀，直接提供原始 Label 即可
-- ✅ 更新工具描述和使用文档
+- ✅ 移除 SQL 查询中的非存在字段
 
 ### v1.0.0 (2025-01-10)
 

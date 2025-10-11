@@ -14,6 +14,19 @@
 import fs from 'node:fs';
 import { detectArchitectureType } from './common-utils.js';
 
+// Gemini API for LLM-based analysis
+let GoogleGenerativeAI = null;
+try {
+  const genaiModule = await import('@google/genai');
+  GoogleGenerativeAI =
+    genaiModule.GoogleGenerativeAI || genaiModule.default?.GoogleGenerativeAI;
+} catch (error) {
+  console.warn(
+    '⚠️ Gemini API not available, LLM analysis will be disabled:',
+    error.message,
+  );
+}
+
 class StarRocksIngestionExpert {
   constructor() {
     this.name = 'ingestion';
@@ -3115,9 +3128,10 @@ class StarRocksIngestionExpert {
     txnId = null,
     dbName = null,
     includeRecommendations = true,
+    useLlmAnalysis = true, // 默认启用 LLM 分析，提供更准确的失败原因识别
   ) {
     console.error(
-      `🔍 查询导入任务: label=${label || 'N/A'}, txn_id=${txnId || 'N/A'}`,
+      `🔍 查询导入任务: label=${label || 'N/A'}, txn_id=${txnId || 'N/A'}, llm_analysis=${useLlmAnalysis}`,
     );
     const startTime = Date.now();
 
@@ -3262,16 +3276,40 @@ class StarRocksIngestionExpert {
       const metrics = this.calculateLoadJobMetrics(loadJob);
 
       // 7. 分析失败原因（如果失败）
-      const failureAnalysis =
-        loadJob.STATE !== 'FINISHED'
-          ? this.analyzeLoadJobFailure(loadJob)
-          : null;
+      let failureAnalysis = null;
+      if (loadJob.STATE !== 'FINISHED') {
+        if (useLlmAnalysis) {
+          // 使用 LLM 进行智能分析
+          failureAnalysis = await this.analyzeLoadJobFailureWithLLM(
+            loadJob,
+            metrics,
+          );
+        } else {
+          // 使用规则匹配进行快速分析
+          failureAnalysis = this.analyzeLoadJobFailure(loadJob);
+        }
+      }
 
       // 8. 生成建议（如果需要）
-      const recommendations =
-        includeRecommendations && loadJob.STATE !== 'FINISHED'
-          ? this.generateLoadJobRecommendations(loadJob, failureAnalysis)
-          : null;
+      let recommendations = null;
+      if (includeRecommendations && loadJob.STATE !== 'FINISHED') {
+        // 优先使用 LLM 生成的建议（如果存在）
+        if (
+          failureAnalysis?.recommendations &&
+          Array.isArray(failureAnalysis.recommendations) &&
+          failureAnalysis.recommendations.length > 0
+        ) {
+          console.error('✅ 使用 LLM 生成的优化建议');
+          recommendations = failureAnalysis.recommendations;
+        } else {
+          // 否则使用规则匹配生成建议
+          console.error('ℹ️ 使用规则匹配生成优化建议');
+          recommendations = this.generateLoadJobRecommendations(
+            loadJob,
+            failureAnalysis,
+          );
+        }
+      }
 
       // 9. 构建完整报告
       const report = {
@@ -3553,6 +3591,219 @@ class StarRocksIngestionExpert {
     }
 
     return analysis;
+  }
+
+  /**
+   * 使用 LLM 分析导入任务失败原因
+   * 支持多种 LLM: DeepSeek (OpenAI 兼容)、Gemini
+   * @param {Object} loadJob - 导入任务信息
+   * @param {Object} metrics - 性能指标
+   * @returns {Promise<Object>} LLM 分析结果
+   */
+  async analyzeLoadJobFailureWithLLM(loadJob, metrics) {
+    console.error('🤖 使用 LLM 进行智能分析...');
+
+    // 构建分析 prompt (通用格式)
+    const prompt = `你是 StarRocks 数据库的专家，请分析以下导入任务的失败原因：
+
+【任务信息】
+- Label: ${loadJob.LABEL}
+- 状态: ${loadJob.STATE}
+- 导入类型: ${loadJob.TYPE}
+- 数据库: ${loadJob.DB_NAME}
+- 表名: ${loadJob.TABLE_NAME}
+
+【错误信息】
+${loadJob.ERROR_MSG || 'N/A'}
+
+【性能指标】
+- 扫描行数: ${loadJob.SCAN_ROWS || 0}
+- 扫描字节: ${loadJob.SCAN_BYTES || 0} bytes
+- 导入行数: ${loadJob.SINK_ROWS || 0}
+- 过滤行数: ${loadJob.FILTERED_ROWS || 0}
+- 导入耗时: ${metrics.load_duration_seconds || 'N/A'} 秒
+- 吞吐量: ${metrics.throughput_mbps ? metrics.throughput_mbps.toFixed(2) + ' MB/s' : 'N/A'}
+
+【时间信息】
+- 创建时间: ${loadJob.CREATE_TIME}
+- 导入开始: ${loadJob.LOAD_START_TIME || 'N/A'}
+- 导入完成: ${loadJob.LOAD_FINISH_TIME || 'N/A'}
+
+请以 JSON 格式返回分析结果，包含以下字段：
+{
+  "category": "失败类别（timeout/resource/data_quality/network/file/transaction/configuration/permission/cancelled/other）",
+  "root_cause": "根本原因（简短描述）",
+  "details": ["详细分析点1", "详细分析点2", ...],
+  "related_issues": ["相关问题或建议1", "相关问题或建议2", ...],
+  "recommendations": [
+    {
+      "priority": "优先级（high/medium/low）",
+      "category": "建议分类",
+      "suggestions": ["具体建议1", "具体建议2", ...]
+    }
+  ]
+}
+
+注意：
+- recommendations 应该根据失败类别提供针对性的优化建议
+- 每个建议要包含优先级（high/medium/low）、分类和具体的操作建议
+- 建议要具体、可执行，包含配置参数、SQL命令、工具推荐等
+
+只返回 JSON，不要添加任何其他文字说明。`;
+
+    // 优先级 1: DeepSeek (OpenAI 兼容 API)
+    const deepseekKey =
+      process.env.DEEPSEEK_API_KEY || process.env.DEEPSEEK_KEY;
+    if (deepseekKey) {
+      try {
+        console.error('  → 使用 DeepSeek API...');
+        const response = await fetch(
+          'https://api.deepseek.com/chat/completions',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${deepseekKey}`,
+            },
+            body: JSON.stringify({
+              model: 'deepseek-chat',
+              messages: [
+                {
+                  role: 'user',
+                  content: prompt,
+                },
+              ],
+              temperature: 0.3,
+              response_format: { type: 'json_object' },
+            }),
+          },
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          const text = data.choices[0].message.content;
+          return this.parseLLMResponse(text, 'DeepSeek');
+        } else {
+          console.warn(
+            `⚠️ DeepSeek API 调用失败: ${response.status} ${response.statusText}`,
+          );
+        }
+      } catch (error) {
+        console.warn(`⚠️ DeepSeek API 调用失败: ${error.message}`);
+      }
+    }
+
+    // 优先级 2: OpenAI 兼容 API (通用)
+    const openaiKey = process.env.OPENAI_API_KEY;
+    if (openaiKey) {
+      try {
+        console.error('  → 使用 OpenAI API...');
+        const response = await fetch(
+          'https://api.openai.com/v1/chat/completions',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${openaiKey}`,
+            },
+            body: JSON.stringify({
+              model: 'gpt-4o-mini',
+              messages: [
+                {
+                  role: 'user',
+                  content: prompt,
+                },
+              ],
+              temperature: 0.3,
+              response_format: { type: 'json_object' },
+            }),
+          },
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          const text = data.choices[0].message.content;
+          return this.parseLLMResponse(text, 'OpenAI');
+        } else {
+          console.warn(
+            `⚠️ OpenAI API 调用失败: ${response.status} ${response.statusText}`,
+          );
+        }
+      } catch (error) {
+        console.warn(`⚠️ OpenAI API 调用失败: ${error.message}`);
+      }
+    }
+
+    // 优先级 3: Gemini API
+    const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    if (geminiKey && GoogleGenerativeAI) {
+      try {
+        console.error('  → 使用 Gemini API...');
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const model = genAI.getGenerativeModel({
+          model: 'gemini-2.0-flash-exp',
+        });
+
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const text = response.text();
+        return this.parseLLMResponse(text, 'Gemini');
+      } catch (error) {
+        console.warn(`⚠️ Gemini API 调用失败: ${error.message}`);
+      }
+    }
+
+    // 所有 LLM 都不可用，fallback 到规则匹配
+    console.warn('⚠️ 未配置任何 LLM API Key，fallback 到规则匹配');
+    console.warn(
+      '提示: 请设置 DEEPSEEK_API_KEY、OPENAI_API_KEY 或 GEMINI_API_KEY 环境变量',
+    );
+    return this.analyzeLoadJobFailure(loadJob);
+  }
+
+  /**
+   * 解析 LLM 返回的 JSON 响应
+   * @param {string} text - LLM 返回的文本
+   * @param {string} llmName - LLM 名称（用于日志）
+   * @returns {Object} 解析后的分析结果
+   */
+  parseLLMResponse(text, llmName) {
+    try {
+      // 移除可能的 markdown 代码块标记
+      const jsonText = text
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim();
+      const llmAnalysis = JSON.parse(jsonText);
+
+      // 验证返回的字段
+      if (!llmAnalysis.category || !llmAnalysis.root_cause) {
+        console.warn(`⚠️ ${llmName} 返回格式不完整，fallback 到规则匹配`);
+        return this.analyzeLoadJobFailure({
+          ERROR_MSG: text,
+          STATE: 'CANCELLED',
+        });
+      }
+
+      console.error(`✅ ${llmName} 分析完成`);
+      return {
+        category: llmAnalysis.category,
+        root_cause: llmAnalysis.root_cause,
+        details: llmAnalysis.details || [],
+        related_issues: llmAnalysis.related_issues || [],
+        recommendations: llmAnalysis.recommendations || [], // LLM 生成的建议
+        analysis_method: 'llm',
+        llm_provider: llmName,
+      };
+    } catch (parseError) {
+      console.error(`❌ 解析 ${llmName} 返回结果失败: ${parseError.message}`);
+      console.error(`${llmName} 返回内容:`, text);
+      console.warn('⚠️ Fallback 到规则匹配');
+      return this.analyzeLoadJobFailure({
+        ERROR_MSG: text,
+        STATE: 'CANCELLED',
+      });
+    }
   }
 
   /**
@@ -4857,6 +5108,7 @@ class StarRocksIngestionExpert {
           args.txn_id || null,
           args.database_name || null,
           args.include_recommendations !== false,
+          args.use_llm_analysis !== false, // 默认 true，只有明确设置为 false 才禁用
         );
 
         // 如果返回的是格式化的字符串报告，直接使用
@@ -6755,6 +7007,12 @@ class StarRocksIngestionExpert {
             include_recommendations: {
               type: 'boolean',
               description: '是否包含优化建议（默认 true）',
+              default: true,
+            },
+            use_llm_analysis: {
+              type: 'boolean',
+              description:
+                '是否使用 LLM 进行智能分析（默认 true）。支持多种 LLM：DeepSeek (优先)、OpenAI、Gemini。自动检测环境变量并选择可用的 API。会增加 1-3 秒响应时间。需要配置以下任一环境变量：DEEPSEEK_API_KEY / DEEPSEEK_KEY / OPENAI_API_KEY / GEMINI_API_KEY。设置为 false 可使用快速规则匹配。',
               default: true,
             },
           },

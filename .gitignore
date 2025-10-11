@@ -53,3 +53,13 @@ gha-creds-*.json
 
 # Log files
 patch_output.log
+nohup.out
+
+# Test files
+test-*.js
+
+# Documentation files
+*.pdf
+
+# Temporary directories
+tmp/
