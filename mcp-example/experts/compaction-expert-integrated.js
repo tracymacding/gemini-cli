@@ -2995,6 +2995,7 @@ class StarRocksCompactionExpert {
    */
   async getHighCompactionPartitions(connection, limit = 10, minScore = 100) {
     try {
+      // StarRocks 不支持在 LIMIT 中使用参数化查询，需要直接拼接
       const [partitions] = await connection.query(
         `
         SELECT
@@ -3009,9 +3010,9 @@ class StarRocksCompactionExpert {
         FROM information_schema.partitions_meta
         WHERE MAX_CS >= ?
         ORDER BY MAX_CS DESC
-        LIMIT ?
+        LIMIT ${parseInt(limit)}
       `,
-        [minScore, limit],
+        [minScore],
       );
 
       return {
