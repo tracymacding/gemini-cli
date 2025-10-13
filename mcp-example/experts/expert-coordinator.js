@@ -12,29 +12,39 @@
 /* eslint-disable no-undef, @typescript-eslint/no-unused-vars */
 
 import { StarRocksStorageExpert } from './storage-expert.js';
+import { StarRocksStorageExpertSolutionC } from './storage-expert-solutionc.js';
 import { StarRocksCompactionExpert } from './compaction-expert-integrated.js';
+import { StarRocksCompactionExpertSolutionC } from './compaction-expert-solutionc.js';
 import { StarRocksIngestionExpert } from './ingestion-expert.js';
+import { StarRocksIngestionExpertSolutionC } from './ingestion-expert-solutionc.js';
 import { StarRocksCacheExpert } from './cache-expert.js';
+import { StarRocksCacheExpertSolutionC } from './cache-expert-solutionc.js';
 import { StarRocksTransactionExpert } from './transaction-expert.js';
+import { StarRocksTransactionExpertSolutionC } from './transaction-expert-solutionc.js';
 import { StarRocksLogExpert } from './log-expert.js';
+import { StarRocksLogExpertSolutionC } from './log-expert-solutionc.js';
 import { StarRocksMemoryExpert } from './memory-expert.js';
+import { StarRocksMemoryExpertSolutionC } from './memory-expert-solutionc.js';
 import { StarRocksQueryPerfExpert } from './query-perf-expert.js';
+import { StarRocksQueryPerfExpertSolutionC } from './query-perf-expert-solutionc.js';
 import { StarRocksOperateExpert } from './operate-expert.js';
+import { StarRocksOperateExpertSolutionC } from './operate-expert-solutionc.js';
 import { StarRocksTableSchemaExpert } from './table-schema-expert.js';
+import { StarRocksTableSchemaExpertSolutionC } from './table-schema-expert-solutionc.js';
 
 class StarRocksExpertCoordinator {
   constructor() {
     this.experts = {
-      storage: new StarRocksStorageExpert(),
-      compaction: new StarRocksCompactionExpert(),
-      ingestion: new StarRocksIngestionExpert(),
-      cache: new StarRocksCacheExpert(),
-      transaction: new StarRocksTransactionExpert(),
-      log: new StarRocksLogExpert(),
-      memory: new StarRocksMemoryExpert(),
-      'query-perf': new StarRocksQueryPerfExpert(),
-      operate: new StarRocksOperateExpert(),
-      'table-schema': new StarRocksTableSchemaExpert(),
+      storage: new StarRocksStorageExpertSolutionC(),  // ✅ 使用 Solution C 版本
+      compaction: new StarRocksCompactionExpertSolutionC(),  // ✅ 使用 Solution C 版本
+      ingestion: new StarRocksIngestionExpertSolutionC(),  // ✅ 使用 Solution C 版本
+      cache: new StarRocksCacheExpertSolutionC(),  // ✅ 使用 Solution C 版本
+      transaction: new StarRocksTransactionExpertSolutionC(),  // ✅ 使用 Solution C 版本
+      log: new StarRocksLogExpertSolutionC(),  // ✅ 使用 Solution C 版本
+      memory: new StarRocksMemoryExpertSolutionC(),  // ✅ 使用 Solution C 版本
+      'query-perf': new StarRocksQueryPerfExpertSolutionC(),  // ✅ 使用 Solution C 版本
+      operate: new StarRocksOperateExpertSolutionC(),  // ✅ 使用 Solution C 版本
+      'table-schema': new StarRocksTableSchemaExpertSolutionC(),  // ✅ 使用 Solution C 版本
     };
 
     // 工具处理器映射表: toolName -> {expert, handler}
@@ -634,6 +644,222 @@ class StarRocksExpertCoordinator {
   }
 
   /**
+   * 获取工具的 SQL 查询定义 (Solution C)
+   */
+  getQueriesForTool(toolName, args = {}) {
+    console.error(`🔍 Coordinator: getQueriesForTool(${toolName})`);
+
+    switch (toolName) {
+      case 'storage_expert_analysis':
+        // 存储专家综合分析：使用 analyze_storage_amplification 工具
+        return this.experts.storage.getQueriesForTool('analyze_storage_amplification', args);
+
+      case 'compaction_expert_analysis':
+        // Compaction 专家综合分析：使用 analyze_high_compaction_score 工具
+        return this.experts.compaction.getQueriesForTool('analyze_high_compaction_score', args);
+
+      case 'ingestion_expert_analysis':
+        // Ingestion 专家综合分析：使用 analyze_ingestion_health 工具
+        return this.experts.ingestion.getQueriesForTool('analyze_ingestion_health', args);
+
+      case 'expert_analysis': {
+        // 多专家协调分析：需要收集所有相关专家的查询
+        const expertScope = args.expert_scope || ['storage', 'compaction'];
+        const allQueries = [];
+
+        // 为每个专家收集查询
+        expertScope.forEach((expertName) => {
+          const expert = this.experts[expertName];
+          if (!expert || typeof expert.getQueriesForTool !== 'function') {
+            return;
+          }
+
+          try {
+            let queries = [];
+
+            // 根据专家类型选择合适的分析工具
+            switch (expertName) {
+              case 'storage':
+                queries = expert.getQueriesForTool('analyze_storage_amplification', args);
+                break;
+              case 'compaction':
+                queries = expert.getQueriesForTool('analyze_high_compaction_score', args);
+                break;
+              case 'ingestion':
+                queries = expert.getQueriesForTool('analyze_ingestion_health', args);
+                break;
+              default:
+                console.error(`   ⚠️  Unknown expert: ${expertName}`);
+            }
+
+            // 为查询添加专家前缀
+            queries.forEach(q => {
+              allQueries.push({
+                ...q,
+                id: `${expertName}_${q.id}`, // 添加专家前缀避免 ID 冲突
+                expert: expertName, // 记录来源专家
+              });
+            });
+          } catch (e) {
+            console.error(`   ⚠️  Failed to get queries from ${expertName}: ${e.message}`);
+          }
+        });
+
+        return allQueries;
+      }
+
+      case 'get_available_experts':
+        // 这个工具不需要 SQL 查询，返回空数组
+        return [];
+
+      default:
+        throw new Error(`Coordinator does not handle tool: ${toolName}`);
+    }
+  }
+
+  /**
+   * 分析查询结果 (Solution C)
+   */
+  async analyzeQueryResults(toolName, results, args = {}) {
+    console.error(`🔬 Coordinator: analyzeQueryResults(${toolName})`);
+
+    switch (toolName) {
+      case 'storage_expert_analysis':
+        return await this.experts.storage.analyzeQueryResults('analyze_storage_amplification', results, args);
+
+      case 'compaction_expert_analysis':
+        return await this.experts.compaction.analyzeQueryResults('analyze_high_compaction_score', results, args);
+
+      case 'ingestion_expert_analysis':
+        return await this.experts.ingestion.analyzeQueryResults('analyze_ingestion_health', results, args);
+
+      case 'expert_analysis': {
+        // 多专家协调分析：需要将结果分配给对应的专家分析
+        const expertScope = args.expert_scope || ['storage', 'compaction'];
+        const expertResults = {};
+
+        // 按专家分组结果
+        const resultsByExpert = {};
+        Object.keys(results).forEach(resultId => {
+          // resultId 格式: expertName_originalId
+          const match = resultId.match(/^([^_]+)_(.+)$/);
+          if (match) {
+            const expertName = match[1];
+            const originalId = match[2];
+            if (!resultsByExpert[expertName]) {
+              resultsByExpert[expertName] = {};
+            }
+            resultsByExpert[expertName][originalId] = results[resultId];
+          }
+        });
+
+        // 让每个专家分析自己的结果
+        for (const expertName of expertScope) {
+          const expert = this.experts[expertName];
+          if (!expert || !resultsByExpert[expertName]) {
+            continue;
+          }
+
+          try {
+            let analysis;
+
+            // 根据专家类型选择合适的分析方法
+            switch (expertName) {
+              case 'storage':
+                analysis = await expert.analyzeQueryResults(
+                  'analyze_storage_amplification',
+                  resultsByExpert[expertName],
+                  args
+                );
+                break;
+              case 'compaction':
+                analysis = await expert.analyzeQueryResults(
+                  'analyze_high_compaction_score',
+                  resultsByExpert[expertName],
+                  args
+                );
+                break;
+              case 'ingestion':
+                analysis = await expert.analyzeQueryResults(
+                  'analyze_ingestion_health',
+                  resultsByExpert[expertName],
+                  args
+                );
+                break;
+              default:
+                throw new Error(`Unknown expert: ${expertName}`);
+            }
+
+            expertResults[expertName] = analysis;
+          } catch (e) {
+            console.error(`   ⚠️  Failed to analyze results from ${expertName}: ${e.message}`);
+            expertResults[expertName] = {
+              expert: expertName,
+              error: e.message,
+              timestamp: new Date().toISOString(),
+            };
+          }
+        }
+
+        // 执行跨模块分析（如果有多个专家结果）
+        let crossModuleAnalysis = null;
+        if (Object.keys(expertResults).length > 1 && args.include_cross_analysis !== false) {
+          try {
+            crossModuleAnalysis = this.analyzeCrossModuleImpacts(expertResults);
+          } catch (e) {
+            console.error(`   ⚠️  Cross-module analysis failed: ${e.message}`);
+          }
+        }
+
+        // 生成综合评估
+        const comprehensiveAssessment = this.generateComprehensiveAssessment(
+          expertResults,
+          crossModuleAnalysis
+        );
+
+        // 优化建议优先级排序
+        const prioritizedRecommendations = this.prioritizeRecommendations(
+          expertResults,
+          crossModuleAnalysis
+        );
+
+        return {
+          coordinator_version: '2.0.0-solutionc',
+          analysis_timestamp: new Date().toISOString(),
+          expert_scope: expertScope,
+
+          // 核心分析结果
+          comprehensive_assessment: comprehensiveAssessment,
+          expert_results: expertResults,
+          cross_module_analysis: crossModuleAnalysis,
+          prioritized_recommendations: prioritizedRecommendations,
+
+          // 元数据
+          analysis_metadata: {
+            experts_count: Object.keys(expertResults).length,
+            total_issues_found: this.countTotalIssues(expertResults),
+            cross_impacts_found: crossModuleAnalysis ? crossModuleAnalysis.impacts.length : 0,
+          },
+        };
+      }
+
+      case 'get_available_experts': {
+        // 直接返回专家列表，不需要查询结果
+        const experts = this.getAvailableExperts();
+        return {
+          coordinator_version: '2.0.0-solutionc',
+          timestamp: new Date().toISOString(),
+          experts: experts,
+          total_count: experts.length,
+        };
+      }
+
+      default:
+        throw new Error(`Coordinator does not handle tool: ${toolName}`);
+    }
+  }
+
+  /**
    * 注册所有专家的工具处理器
    * @private
    */
@@ -739,10 +965,9 @@ class StarRocksExpertCoordinator {
         report += '=====================================\n\n';
 
         experts.forEach((expert, index) => {
-          report += `${index + 1}. **${expert.display_name}** (${expert.name})\n`;
+          report += `${index + 1}. **${expert.name}**\n`;
           report += `   版本: ${expert.version}\n`;
-          report += `   ${expert.description}\n`;
-          report += `   专长领域: ${expert.capabilities.join(', ')}\n\n`;
+          report += `   ${expert.description}\n\n`;
         });
 
         report += `\n💡 提示: 使用 expert_analysis 工具可以同时调用多个专家进行协调分析\n`;

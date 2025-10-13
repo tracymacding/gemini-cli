@@ -1,15 +1,36 @@
-# StarRocks MCP HTTP Server
+# StarRocks MCP HTTP Server - 完整版
+
+**包含所有 11 个 Expert 和 33 个工具的中心化 HTTP 服务器!**
 
 将 StarRocks 专家系统部署为远程 HTTP 服务，支持多个客户端通过网络访问。
 
-## 🎯 特性
+## 🎯 核心特性
+
+### 完整的 Expert 支持
+
+✅ **所有 11 个专家模块**：
+- 💾 **storage-expert** - 存储健康诊断
+- 🗜️ **compaction-expert** - Compaction 分析
+- 📥 **ingestion-expert** - 数据摄取诊断
+- 💿 **cache-expert** - 缓存性能分析 (你要的!)
+- 🔄 **transaction-expert** - 事务管理分析
+- 📋 **log-expert** - 日志分析
+- 💾 **memory-expert** - 内存管理分析
+- ⚡ **query-perf-expert** - 查询性能分析
+- 🔧 **operate-expert** - 运维操作工具
+- 📊 **table-schema-expert** - 表结构分析
+- 🎯 **coordinator** - 跨模块协调分析
+
+✅ **所有 33 个工具** 完整可用!
+
+### 技术特性
 
 - ✅ **HTTP/SSE 传输**：基于 Server-Sent Events 的实时通信
 - 🔐 **API Key 认证**：保护你的服务免受未授权访问
 - 🌍 **CORS 支持**：配置允许的访问来源
 - ❤️ **健康检查**：监控服务状态
 - 📝 **请求日志**：记录所有请求便于调试
-- 🎨 **与现有专家系统完全兼容**：复用所有诊断工具
+- 🎨 **完整兼容 MCP 协议**：标准 MCP 客户端直接连接
 
 ## 📦 安装依赖
 

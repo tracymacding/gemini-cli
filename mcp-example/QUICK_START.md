@@ -1,4 +1,21 @@
-# 🚀 快速开始指南
+# 🚀 快速开始指南 - 完整版 (包含所有 Expert)
+
+**⭐ 这个 HTTP 服务器包含所有 11 个 Expert 和 33 个工具!**
+
+包括:
+- 💾 storage-expert
+- 🗜️ compaction-expert
+- 📥 ingestion-expert
+- 💿 **cache-expert** (你要找的!)
+- 🔄 transaction-expert
+- 📋 log-expert
+- 💾 memory-expert
+- ⚡ query-perf-expert
+- 🔧 operate-expert
+- 📊 table-schema-expert
+- 🎯 coordinator
+
+所有功能通过 `index-expert-http.js` 提供!
 
 ## 📍 配置文件位置
 

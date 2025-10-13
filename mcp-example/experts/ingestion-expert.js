@@ -332,9 +332,9 @@ class StarRocksIngestionExpert {
 
       // 补充其他类型的导入作业（从 information_schema.loads）
       const [otherLoads] = await connection.query(`
-        SELECT JOB_ID, LABEL, STATE, PROGRESS, TYPE, ETL_INFO, TASK_INFO, ERROR_MSG,
+        SELECT JOB_ID, LABEL, STATE, PROGRESS, TYPE, TASK_INFO, ERROR_MSG,
                CREATE_TIME, ETL_START_TIME, ETL_FINISH_TIME, LOAD_START_TIME, LOAD_FINISH_TIME,
-               URL, JOB_DETAILS, TRACKING_URL, TRACKING_SQL, REJECTED_RECORD_PATH
+               URL, TRACKING_URL, TRACKING_SQL
         FROM information_schema.loads
         WHERE CREATE_TIME >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
           AND TYPE != 'STREAM LOAD'
@@ -358,7 +358,7 @@ class StarRocksIngestionExpert {
     // 2. 获取正在运行的导入任务
     try {
       const [runningLoads] = await connection.query(`
-        SELECT JOB_ID, LABEL, STATE, PROGRESS, TYPE, CREATE_TIME, ETL_INFO
+        SELECT JOB_ID, LABEL, STATE, PROGRESS, TYPE, CREATE_TIME
         FROM information_schema.loads
         WHERE STATE IN ('PENDING', 'ETL', 'LOADING')
         ORDER BY CREATE_TIME DESC;
@@ -372,7 +372,7 @@ class StarRocksIngestionExpert {
     // 3. 获取失败的导入作业
     try {
       const [failedLoads] = await connection.query(`
-        SELECT JOB_ID, LABEL, STATE, TYPE, ERROR_MSG, CREATE_TIME, JOB_DETAILS
+        SELECT JOB_ID, LABEL, STATE, TYPE, ERROR_MSG, CREATE_TIME
         FROM information_schema.loads
         WHERE STATE = 'CANCELLED' AND CREATE_TIME >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
         ORDER BY CREATE_TIME DESC
@@ -386,12 +386,14 @@ class StarRocksIngestionExpert {
 
     // 4. 获取Routine Load信息
     try {
+      // Note: routine_loads表在某些StarRocks版本中不存在
+      // 尝试从loads表获取ROUTINE_LOAD类型的任务
       const [routineLoads] = await connection.query(`
-        SELECT NAME, CREATE_TIME, PAUSE_TIME, END_TIME, TABLE_NAME, STATE,
-               DATA_SOURCE_NAME, CURRENT_TASK_NUM, JOB_PROPERTIES, DATA_SOURCE_PROPERTIES,
-               CUSTOM_PROPERTIES, STATISTIC, PROGRESS, TRACKING_SQL, OTHER_MSG
-        FROM information_schema.routine_loads
-        ORDER BY CREATE_TIME DESC;
+        SELECT JOB_ID, LABEL, STATE, PROGRESS, TYPE, CREATE_TIME
+        FROM information_schema.loads
+        WHERE TYPE = 'ROUTINE_LOAD'
+        ORDER BY CREATE_TIME DESC
+        LIMIT 100;
       `);
       data.routine_loads = routineLoads;
     } catch (error) {

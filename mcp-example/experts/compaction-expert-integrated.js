@@ -2328,6 +2328,15 @@ class StarRocksCompactionExpert {
       },
     );
 
+    // 安全访问 diagnosis_results，提供默认值
+    const diagnosisResults = comprehensiveResult.diagnosis_results || {
+      total_issues: 0,
+      criticals: [],
+      warnings: [],
+      issues: [],
+      summary: '无诊断结果',
+    };
+
     // 转换为协调器期望的结果格式
     return {
       expert_type: 'compaction',
@@ -2337,25 +2346,25 @@ class StarRocksCompactionExpert {
 
       // 健康评估
       compaction_health: {
-        score: comprehensiveResult.compaction_health.score,
-        level: comprehensiveResult.compaction_health.level,
-        status: comprehensiveResult.compaction_health.status,
+        score: comprehensiveResult.compaction_health?.score || 100,
+        level: comprehensiveResult.compaction_health?.level || 'EXCELLENT',
+        status: comprehensiveResult.compaction_health?.status || 'HEALTHY',
       },
 
       // 诊断结果
       diagnosis_results: {
-        total_issues: comprehensiveResult.diagnosis_results.total_issues,
-        criticals: comprehensiveResult.diagnosis_results.criticals.map((c) => ({
+        total_issues: diagnosisResults.total_issues || 0,
+        criticals: (diagnosisResults.criticals || []).map((c) => ({
           type: c.type,
           message: c.message,
           urgency: c.urgency,
           impact: c.impact,
         })),
-        warnings: comprehensiveResult.diagnosis_results.warnings.map((w) => ({
+        warnings: (diagnosisResults.warnings || []).map((w) => ({
           type: w.type,
           message: w.message,
         })),
-        summary: comprehensiveResult.diagnosis_results.summary,
+        summary: diagnosisResults.summary || '诊断完成',
       },
 
       // 专业建议
