@@ -32,6 +32,7 @@ else
 fi
 
 # 设置默认值
+export API_HOST=${API_HOST:-0.0.0.0}
 export API_PORT=${API_PORT:-3002}
 export API_KEY=${API_KEY:-demo-key}
 export SR_HOST=${SR_HOST:-localhost}
@@ -42,7 +43,7 @@ export SR_PORT=${SR_PORT:-9030}
 
 echo ""
 echo -e "${BLUE}📋 当前配置:${NC}"
-echo "   API 端口: $API_PORT"
+echo "   API 绑定: $API_HOST:$API_PORT"
 echo "   API Key: ${API_KEY:0:8}..."
 echo "   数据库: $SR_USER@$SR_HOST:$SR_PORT"
 echo ""

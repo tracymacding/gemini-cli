@@ -1,3 +1,4 @@
+/* eslint-env node */
 /**
  * @license
  * Copyright 2025 Google LLC
@@ -37,6 +38,7 @@ class CompleteCentralAPIServer {
   constructor() {
     this.app = express();
     this.port = process.env.API_PORT || 3002;
+    this.host = process.env.API_HOST || '0.0.0.0'; // 默认监听所有网络接口
     this.apiKey = process.env.API_KEY || '';
 
     // 数据库配置（服务器端）
@@ -221,14 +223,15 @@ class CompleteCentralAPIServer {
   }
 
   start() {
-    this.server = this.app.listen(this.port, () => {
+    this.server = this.app.listen(this.port, this.host, () => {
       console.log('');
       console.log('🚀 StarRocks Central API Server (Complete)');
       console.log('================================================');
       console.log('');
-      console.log(`   📡 API endpoint:     http://localhost:${this.port}`);
-      console.log(`   ❤️  Health check:    http://localhost:${this.port}/health`);
-      console.log(`   🔧 List tools:       http://localhost:${this.port}/api/tools`);
+      console.log(`   🌐 Bind address:     ${this.host}:${this.port}`);
+      console.log(`   📡 API endpoint:     http://${this.host === '0.0.0.0' ? '<server-ip>' : this.host}:${this.port}`);
+      console.log(`   ❤️  Health check:    http://${this.host === '0.0.0.0' ? '<server-ip>' : this.host}:${this.port}/health`);
+      console.log(`   🔧 List tools:       http://${this.host === '0.0.0.0' ? '<server-ip>' : this.host}:${this.port}/api/tools`);
       console.log('');
       console.log(`   🔑 Authentication:   ${this.apiKey ? 'Enabled' : 'Disabled'}`);
       console.log(`   📦 Tools loaded:     ${this.tools.length}`);
@@ -241,6 +244,15 @@ class CompleteCentralAPIServer {
       console.log('   数据库配置:');
       console.log(`   Host: ${this.dbConfig.host}:${this.dbConfig.port}`);
       console.log(`   User: ${this.dbConfig.user}`);
+      console.log('');
+      console.log('   ⚠️  安全提示:');
+      if (this.host === '0.0.0.0') {
+        console.log('   - 服务器监听所有网络接口，可从外部访问');
+        console.log('   - 请确保设置了强 API_KEY');
+        console.log('   - 建议配置防火墙规则');
+      } else {
+        console.log(`   - 服务器仅监听 ${this.host}`);
+      }
       console.log('');
       console.log('   Press Ctrl+C to stop the server');
       console.log('');
