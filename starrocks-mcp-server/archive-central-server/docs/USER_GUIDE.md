@@ -45,7 +45,6 @@
 SR_HOST=localhost
 SR_USER=root
 SR_PASSWORD=your_password
-SR_DATABASE=information_schema
 SR_PORT=9030
 ```
 
@@ -93,7 +92,6 @@ import('mysql2/promise').then(mysql => {
         "SR_HOST": "localhost",
         "SR_USER": "root",
         "SR_PASSWORD": "your_password",
-        "SR_DATABASE": "information_schema",
         "SR_PORT": "9030"
       }
     }
@@ -193,7 +191,6 @@ Stdio 模式的日志输出到客户端的标准错误流：
 SR_HOST=10.0.1.100
 SR_USER=root
 SR_PASSWORD=your_password
-SR_DATABASE=information_schema
 SR_PORT=9030
 
 # HTTP 服务器配置
@@ -524,7 +521,6 @@ Then start the agent:
 SR_HOST=10.0.1.100
 SR_USER=root
 SR_PASSWORD=your_internal_db_password
-SR_DATABASE=information_schema
 SR_PORT=9030
 
 # Agent 服务配置
@@ -1509,7 +1505,6 @@ setInterval(() => {
 SR_HOST=localhost              # StarRocks 主机地址
 SR_USER=root                   # 数据库用户名
 SR_PASSWORD=                   # 数据库密码
-SR_DATABASE=information_schema # 默认数据库
 SR_PORT=9030                   # 数据库端口
 
 # ========== HTTP 服务器配置（模式 2/3）==========

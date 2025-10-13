@@ -3,6 +3,7 @@
 ## 当前状态
 
 ✅ **已完成的组件**:
+
 - Central API Server (index-expert-api.js) - 运行中 @ http://localhost:3002
 - Thin MCP Client (thin-mcp-server.js) - 已安装 @ ~/.starrocks-mcp/
 - 安装脚本 (install-starrocks-mcp.sh) - 已测试通过
@@ -25,7 +26,6 @@ nano ~/.starrocks-mcp/.env
 SR_HOST=localhost
 SR_USER=root
 SR_PASSWORD=your_actual_password  # 修改为实际密码
-SR_DATABASE=information_schema
 SR_PORT=9030
 
 # Central API 地址（本地测试使用 localhost，生产环境使用实际域名）
@@ -53,7 +53,6 @@ nano ~/.gemini/settings.json
         "SR_HOST": "localhost",
         "SR_USER": "root",
         "SR_PASSWORD": "your_actual_password",
-        "SR_DATABASE": "information_schema",
         "SR_PORT": "9030",
         "CENTRAL_API": "http://localhost:3002",
         "CENTRAL_API_TOKEN": "demo-key"
@@ -80,6 +79,7 @@ gemini
 ```
 
 你应该看到 3 个工具:
+
 - `analyze_storage_health` - 全面分析存储健康状况
 - `analyze_compaction_health` - 分析 Compaction 健康状况
 - `analyze_ingestion_health` - 分析数据摄取健康状况
@@ -111,11 +111,13 @@ Gemini AI 会自动调用相应的工具，执行诊断，并返回专业的分�
 ### 场景 1: 存储健康检查
 
 **用户输入**:
+
 ```
 > 帮我检查一下存储系统的健康状况
 ```
 
 **系统响应流程**:
+
 1. Gemini AI 理解意图，决定调用 `analyze_storage_health` 工具
 2. Gemini CLI 调用本地 Thin MCP Server (通过 Stdio)
 3. Thin MCP Server:
@@ -126,6 +128,7 @@ Gemini AI 会自动调用相应的工具，执行诊断，并返回专业的分�
 4. 用户看到完整的诊断报告
 
 **报告示例**:
+
 ```
 💾 StarRocks 存储专家分析报告
 🟢 健康分数: 95/100 (EXCELLENT)
@@ -146,11 +149,13 @@ Gemini AI 会自动调用相应的工具，执行诊断，并返回专业的分�
 ### 场景 2: Compaction 问题诊断
 
 **用户输入**:
+
 ```
 > Compaction 好像很慢，帮我看看是什么问题
 ```
 
 **报告示例**:
+
 ```
 🔄 StarRocks Compaction 专家分析报告
 🟡 健康分数: 72/100 (FAIR)
@@ -188,14 +193,17 @@ Thin MCP Server (本地，~250行代码)
 ## 关键优势
 
 ### 1. 零网络配置
+
 - ✅ 客户只需访问 HTTPS API (无需暴露端口)
 - ✅ 无需配置防火墙或反向代理
 - ✅ 适合企业内网环境
 
 ### 2. 零维护升级
+
 **场景**: 你想优化 SQL 查询或改进分析算法
 
 **操作**:
+
 ```bash
 # 1. 修改 index-expert-api.js
 nano index-expert-api.js
@@ -209,12 +217,14 @@ pm2 restart starrocks-api
 客户端代码只有 ~250 行，极少需要更新。
 
 ### 3. 数据安全
+
 - ✅ 数据库密码只存储在客户本地 (`~/.starrocks-mcp/.env`)
 - ✅ SQL 在客户本地 StarRocks 执行
 - ✅ 只有查询结果发送给 API (用于分析)
 - ✅ 原始数据不离开客户环境
 
 ### 4. MCP 标准兼容
+
 - ✅ 使用标准 MCP Stdio Transport
 - ✅ 与 Gemini CLI 原生集成
 - ✅ 支持工具列表、工具调用等标准操作
@@ -263,6 +273,7 @@ cd /home/disk5/dingkai/github/gemini-cli/mcp-example
 ### 服务端 (你维护)
 
 1. **部署 API Server**:
+
 ```bash
 # 使用 PM2 管理进程
 cd mcp-example
@@ -275,6 +286,7 @@ pm2 startup
 ```
 
 2. **配置 Nginx (HTTPS)**:
+
 ```nginx
 server {
     listen 443 ssl;
@@ -327,12 +339,15 @@ gemini
 ### 问题: Gemini CLI 找不到工具
 
 **解决**:
+
 1. 检查 Gemini CLI 配置是否正确:
+
    ```bash
    cat ~/.gemini/settings.json
    ```
 
 2. 检查 Thin MCP Server 是否可执行:
+
    ```bash
    node ~/.starrocks-mcp/thin-mcp-server.js
    ```
@@ -342,7 +357,9 @@ gemini
 ### 问题: 连接数据库失败
 
 **解决**:
+
 1. 验证数据库连接信息:
+
    ```bash
    mysql -h localhost -P 9030 -u root -p
    ```
@@ -355,12 +372,15 @@ gemini
 ### 问题: API 请求失败
 
 **解决**:
+
 1. 验证 API 服务器是否运行:
+
    ```bash
    curl http://localhost:3002/health
    ```
 
 2. 检查 API Token 是否正确:
+
    ```bash
    echo $CENTRAL_API_TOKEN
    ```
@@ -377,6 +397,7 @@ gemini
 3. **开始使用** - 启动 Gemini CLI 并尝试诊断命令
 
 完整文档请参考:
+
 - **SOLUTION_C_GUIDE.md** - 完整的架构和部署指南 (~1100 行)
 - **USAGE_DEMO.md** - 10 步完整数据流演示
 - **ARCHITECTURE.md** - 架构设计文档

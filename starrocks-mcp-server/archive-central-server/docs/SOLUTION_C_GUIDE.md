@@ -21,22 +21,26 @@
 ## 核心优势
 
 ### ✅ 1. 零网络配置（客户侧）
+
 - 无需暴露任何端口
 - 无需防火墙规则
 - 无需 VPN/内网穿透
 - 只需要能访问公网 HTTPS API
 
 ### ✅ 2. 真正的零维护升级
+
 - SQL 逻辑在中心 API（你维护）
 - 升级 API → 所有客户自动生效
 - 客户端 Thin MCP Server 基本不需要升级
 
 ### ✅ 3. 数据隐私最佳
+
 - 数据库密码只在客户本地
 - SQL 在客户本地执行
 - 只发送查询结果给 API（用于分析）
 
 ### ✅ 4. 完全符合 MCP 标准
+
 - 使用 Gemini CLI 原生 Stdio 传输
 - 标准 MCP 协议
 - 可被任何 MCP 客户端使用
@@ -185,6 +189,7 @@ cd starrocks-mcp/mcp-example
 ```
 
 **安装脚本会**：
+
 - ✅ 检查 Node.js 版本（>= 18）
 - ✅ 安装到 `~/.starrocks-mcp/`
 - ✅ 安装必要的依赖包
@@ -206,7 +211,6 @@ nano ~/.starrocks-mcp/.env
 SR_HOST=192.168.1.100      # 修改为实际数据库地址
 SR_USER=root                # 修改为实际用户
 SR_PASSWORD=actual_password # 修改为实际密码
-SR_DATABASE=information_schema
 SR_PORT=9030
 
 # 中心 API 配置
@@ -234,7 +238,6 @@ nano ~/.gemini/settings.json
         "SR_HOST": "192.168.1.100",
         "SR_USER": "root",
         "SR_PASSWORD": "actual_password",
-        "SR_DATABASE": "information_schema",
         "SR_PORT": "9030",
         "CENTRAL_API": "https://api.your-domain.com",
         "CENTRAL_API_TOKEN": "client-token-xxx"
@@ -245,6 +248,7 @@ nano ~/.gemini/settings.json
 ```
 
 **注意**：
+
 - 路径必须是绝对路径
 - 可以直接在 `env` 中配置，或者依赖 `.env` 文件
 
@@ -278,6 +282,7 @@ Available MCP Tools from starrocks-expert:
 ```
 
 **预期行为**：
+
 1. Gemini 调用 `analyze_storage_health` 工具
 2. 本地 Thin MCP Server 从中心 API 获取 SQL 查询
 3. 在本地执行 SQL
@@ -374,7 +379,9 @@ analyzeStorageHealth(results) {
 
 ```javascript
 // 1. 获取 SQL
-const queryDef = await fetch(`${CENTRAL_API}/api/queries/${toolName}`).then(r => r.json());
+const queryDef = await fetch(`${CENTRAL_API}/api/queries/${toolName}`).then(
+  (r) => r.json(),
+);
 
 // 2. 执行 SQL
 const connection = await mysql.createConnection(dbConfig);
@@ -387,8 +394,8 @@ for (const query of queryDef.queries) {
 // 3. 发送分析
 const analysis = await fetch(`${CENTRAL_API}/api/analyze/${toolName}`, {
   method: 'POST',
-  body: JSON.stringify({ results })
-}).then(r => r.json());
+  body: JSON.stringify({ results }),
+}).then((r) => r.json());
 
 // 4. 返回报告
 return { content: [{ type: 'text', text: formatReport(analysis) }] };
@@ -399,54 +406,66 @@ return { content: [{ type: 'text', text: formatReport(analysis) }] };
 ## 可用工具列表
 
 ### 1. analyze_storage_health
+
 **功能**: 全面分析存储健康状况
 
 **执行的 SQL**:
+
 - `SHOW BACKENDS;` - BE 节点信息
 - `SELECT ... FROM information_schema.backends` - Tablet 统计
 - `SELECT ... FROM information_schema.partitions_meta` - 分区存储
 
 **分析内容**:
+
 - 磁盘使用率检查
 - 错误 Tablet 检测
 - 数据分布均衡性
 - 健康分数计算（0-100）
 
 **使用示例**:
+
 ```
 请帮我分析 StarRocks 的存储健康状况
 ```
 
 ### 2. analyze_compaction_health
+
 **功能**: 分析 Compaction 健康状况
 
 **执行的 SQL**:
+
 - `SHOW BACKENDS;` - BE 节点信息
 - `SELECT ... FROM information_schema.partitions_meta WHERE MAX_CS >= 100` - 高 Compaction Score 分区
 
 **分析内容**:
+
 - 高 Compaction Score 分区识别
 - Compaction 配置建议
 - 健康分数计算
 
 **使用示例**:
+
 ```
 检查一下 Compaction 是否正常
 ```
 
 ### 3. analyze_ingestion_health
+
 **功能**: 分析数据摄取健康状况
 
 **执行的 SQL**:
+
 - `SELECT ... FROM information_schema.loads WHERE CREATE_TIME >= ...` - 最近导入作业
 - `SELECT ... FROM information_schema.loads WHERE STATE = 'CANCELLED'` - 失败的作业
 
 **分析内容**:
+
 - 导入成功率计算
 - 失败作业分析
 - 性能建议
 
 **使用示例**:
+
 ```
 最近的数据导入有问题吗？
 ```
@@ -525,7 +544,10 @@ getAllTools() {
 ```javascript
 if (toolName === 'analyze_query_performance') {
   return [
-    { id: 'slow_queries', sql: 'SELECT ... FROM information_schema.queries_audit ...' }
+    {
+      id: 'slow_queries',
+      sql: 'SELECT ... FROM information_schema.queries_audit ...',
+    },
   ];
 }
 ```
@@ -583,17 +605,20 @@ npm install
 **排查步骤**：
 
 1. 检查 Thin MCP Server 是否正常启动：
+
    ```bash
    # Gemini CLI 的错误输出会显示启动日志
    # 查看是否有错误信息
    ```
 
 2. 检查中心 API 是否可达：
+
    ```bash
    curl https://api.your-domain.com/health
    ```
 
 3. 检查 API Token 是否正确：
+
    ```bash
    curl https://api.your-domain.com/api/tools \
      -H "X-API-Key: your-token"
@@ -608,12 +633,14 @@ npm install
 **可能原因**：
 
 1. **中心 API 宕机**
+
    ```bash
    # 检查 API 状态
    curl https://api.your-domain.com/health
    ```
 
 2. **工具名称不存在**
+
    ```bash
    # 检查工具列表
    curl https://api.your-domain.com/api/tools -H "X-API-Key: xxx"
@@ -631,17 +658,20 @@ npm install
 **排查步骤**：
 
 1. 检查数据库连接：
+
    ```bash
    mysql -h 192.168.1.100 -P 9030 -u root -p
    ```
 
 2. 检查 SQL 权限：
+
    ```sql
    -- 确认用户有查询 information_schema 的权限
    SHOW GRANTS;
    ```
 
 3. 手动执行 SQL：
+
    ```bash
    # 获取 SQL
    curl https://api.your-domain.com/api/queries/analyze_storage_health \
@@ -688,7 +718,7 @@ npm install
    // 在 thin-mcp-server.js 中增加 timeout
    const response = await fetch(url, {
      headers: headers,
-     timeout: 60000  // 60秒
+     timeout: 60000, // 60秒
    });
    ```
 
@@ -699,6 +729,7 @@ npm install
 ### 1. API 认证
 
 **强烈建议**：
+
 - 使用强 API Key（至少 32 字符）
 - 定期轮换 API Key
 - 为每个客户生成独立的 Token
@@ -721,6 +752,7 @@ sudo certbot --nginx -d api.your-domain.com
 ### 3. 数据隐私
 
 **当前设计**：
+
 - ✅ 数据库密码只在客户本地
 - ✅ 查询结果发送给 API（用于分析）
 - ⚠️ 如果客户对数据极度敏感，可以修改为只发送聚合结果
@@ -731,8 +763,13 @@ sudo certbot --nginx -d api.your-domain.com
 // 在 thin-mcp-server.js 中
 // 不发送完整结果，只发送聚合统计
 const summary = {
-  disk_usage_max: Math.max(...results.backends.map(be => parseFloat(be.MaxDiskUsedPct))),
-  error_tablet_count: results.backends.reduce((sum, be) => sum + parseInt(be.ErrTabletNum), 0)
+  disk_usage_max: Math.max(
+    ...results.backends.map((be) => parseFloat(be.MaxDiskUsedPct)),
+  ),
+  error_tablet_count: results.backends.reduce(
+    (sum, be) => sum + parseInt(be.ErrTabletNum),
+    0,
+  ),
 };
 
 // 发送 summary 而不是完整 results
@@ -748,7 +785,7 @@ app.use((req, res, next) => {
   const logData = {
     method: req.method,
     path: req.path,
-    status: res.statusCode
+    status: res.statusCode,
     // 不记录 body 中的数据库结果
   };
   console.log(JSON.stringify(logData));
@@ -765,8 +802,8 @@ app.use((req, res, next) => {
 **客户端已实现**（1小时缓存）：
 
 ```javascript
-if (this.toolsCache && (Date.now() - this.cacheTime) < this.cacheTTL) {
-  return this.toolsCache;  // 使用缓存
+if (this.toolsCache && Date.now() - this.cacheTime < this.cacheTTL) {
+  return this.toolsCache; // 使用缓存
 }
 ```
 
@@ -839,12 +876,14 @@ async executeQueries(queries) {
 ### 适用场景
 
 **最适合**：
+
 - ✅ SaaS 多租户服务
 - ✅ 客户数量多（升级维护成本高）
 - ✅ 客户网络环境复杂（防火墙严格）
 - ✅ 需要频繁迭代 SQL 逻辑
 
 **不适合**：
+
 - ❌ 客户只有 1-2 个（可以用方案 A/B）
 - ❌ 客户完全拒绝数据发送到外部（即使聚合数据也不行）
 - ❌ SQL 逻辑完全稳定，永不修改
@@ -871,11 +910,11 @@ mcp-example/
 
 ### B. 端口使用
 
-| 端口 | 用途 | 部署位置 |
-|------|------|---------|
-| 3002 | 中心 REST API | 服务端（你维护） |
-| 9030 | StarRocks FE | 客户内网 |
-| N/A  | Thin MCP Server (Stdio) | 客户本地 |
+| 端口 | 用途                    | 部署位置         |
+| ---- | ----------------------- | ---------------- |
+| 3002 | 中心 REST API           | 服务端（你维护） |
+| 9030 | StarRocks FE            | 客户内网         |
+| N/A  | Thin MCP Server (Stdio) | 客户本地         |
 
 ### C. 常用命令
 

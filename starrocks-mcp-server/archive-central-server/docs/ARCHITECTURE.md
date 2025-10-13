@@ -135,7 +135,6 @@ async createConnection() {
     host: process.env.SR_HOST,
     user: process.env.SR_USER,
     password: process.env.SR_PASSWORD,
-    database: process.env.SR_DATABASE,
     port: process.env.SR_PORT || 9030,
   });
 }

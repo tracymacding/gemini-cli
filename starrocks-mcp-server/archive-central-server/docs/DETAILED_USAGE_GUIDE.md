@@ -80,7 +80,6 @@ nano ~/.starrocks-mcp/.env
 SR_HOST=localhost
 SR_USER=root
 SR_PASSWORD=              # 如果有密码请填写
-SR_DATABASE=information_schema
 SR_PORT=9030
 
 # 中心 API 配置（必填）
@@ -110,7 +109,6 @@ nano ~/.gemini/settings.json
         "SR_HOST": "localhost",
         "SR_USER": "root",
         "SR_PASSWORD": "",
-        "SR_DATABASE": "information_schema",
         "SR_PORT": "9030",
         "CENTRAL_API": "http://localhost:3002",
         "CENTRAL_API_TOKEN": "demo-key"
@@ -121,6 +119,7 @@ nano ~/.gemini/settings.json
 ```
 
 **注意**：
+
 - 如果 `settings.json` 已有其他配置，只需在 `mcpServers` 对象中添加 `starrocks-expert` 部分
 - 路径必须是绝对路径：`/home/disk1/dingkai/.starrocks-mcp/thin-mcp-server.js`
 - 如果有密码，修改 `SR_PASSWORD` 的值
@@ -138,7 +137,6 @@ cd ~/.starrocks-mcp
 export SR_HOST=localhost
 export SR_USER=root
 export SR_PASSWORD=""
-export SR_DATABASE=information_schema
 export SR_PORT=9030
 export CENTRAL_API=http://localhost:3002
 export CENTRAL_API_TOKEN=demo-key
@@ -178,6 +176,7 @@ gemini
 **期望输出**：应该看到 `starrocks-expert` 服务器，状态为 `connected`。
 
 如果看到错误或 `disconnected`，检查：
+
 1. 路径是否正确
 2. API 服务器是否运行
 3. 配置文件是否有语法错误
@@ -269,28 +268,35 @@ Gemini AI 会理解你的意图，自动调用相应的工具。
 **解决步骤**：
 
 1. **检查 API 服务器是否运行**：
+
    ```bash
    curl http://localhost:3002/health
    ```
+
    如果失败，重启 API 服务器。
 
 2. **检查 Thin MCP Server 路径**：
+
    ```bash
    ls -la /home/disk1/dingkai/.starrocks-mcp/thin-mcp-server.js
    ```
+
    如果不存在，运行安装脚本。
 
 3. **手动测试 MCP 服务器**：
+
    ```bash
    cd ~/.starrocks-mcp
-   SR_HOST=localhost SR_USER=root SR_PASSWORD="" SR_DATABASE=information_schema SR_PORT=9030 CENTRAL_API=http://localhost:3002 CENTRAL_API_TOKEN=demo-key node thin-mcp-server.js
    ```
+
    输入测试 JSON（见第三步），看是否返回工具列表。
 
 4. **检查 Gemini 配置文件语法**：
+
    ```bash
    cat ~/.gemini/settings.json | jq .
    ```
+
    如果报错，说明 JSON 格式有问题。
 
 5. **完全重启 Gemini CLI**：
@@ -306,11 +312,13 @@ Gemini AI 会理解你的意图，自动调用相应的工具。
 **解决步骤**：
 
 1. **测试数据库连接**：
+
    ```bash
    mysql -h localhost -P 9030 -u root -p
    ```
 
 2. **检查配置**：
+
    ```bash
    cat ~/.gemini/settings.json | jq '.mcpServers."starrocks-expert".env'
    ```
@@ -348,6 +356,7 @@ Gemini AI 会理解你的意图，自动调用相应的工具。
 
 2. **简化配置测试**：
    临时移除 `mcpServers` 配置，确认 Gemini 本身正常：
+
    ```bash
    # 备份配置
    cp ~/.gemini/settings.json ~/.gemini/settings.json.bak
@@ -494,6 +503,7 @@ gemini
 4. 错误信息：Gemini CLI 中的完整错误输出
 
 参考完整文档：
+
 - `SOLUTION_C_GUIDE.md` - 完整架构和部署指南
 - `USAGE_DEMO.md` - 10 步数据流演示
 - `HOW_TO_USE.md` - 快速开始指南

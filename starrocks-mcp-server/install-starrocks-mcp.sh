@@ -103,7 +103,6 @@ cat > "$INSTALL_DIR/.env" <<EOF
 SR_HOST=localhost
 SR_USER=root
 SR_PASSWORD=
-SR_DATABASE=information_schema
 SR_PORT=9030
 
 # 中心 API 配置
@@ -130,7 +129,6 @@ cat > "$INSTALL_DIR/GEMINI_CONFIG_EXAMPLE.json" <<EOF
         "SR_HOST": "localhost",
         "SR_USER": "root",
         "SR_PASSWORD": "your_password",
-        "SR_DATABASE": "information_schema",
         "SR_PORT": "9030",
         "CENTRAL_API": "http://localhost:3002",
         "CENTRAL_API_TOKEN": ""

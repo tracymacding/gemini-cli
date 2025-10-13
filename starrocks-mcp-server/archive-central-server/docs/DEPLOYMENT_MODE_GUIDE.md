@@ -6,10 +6,10 @@
 
 这说明您使用了错误的部署模式。请根据下表选择正确的启动脚本：
 
-| 问题 | 原因 | 解决方案 |
-|------|------|---------|
-| `ECONNREFUSED` 连接 localhost:9030 失败 | 服务器无 StarRocks | 使用 **Solution C 模式** |
-| 工具返回空数据 | SQL 在错误的机器上执行 | 检查部署模式 |
+| 问题                                    | 原因                   | 解决方案                 |
+| --------------------------------------- | ---------------------- | ------------------------ |
+| `ECONNREFUSED` 连接 localhost:9030 失败 | 服务器无 StarRocks     | 使用 **Solution C 模式** |
+| 工具返回空数据                          | SQL 在错误的机器上执行 | 检查部署模式             |
 
 ---
 
@@ -29,6 +29,7 @@
 ```
 
 **特点**:
+
 - ✅ 客户端无需数据库
 - ✅ 客户端无需执行 SQL
 - ❌ **服务器必须能连接 StarRocks**
@@ -56,6 +57,7 @@
 ```
 
 **特点**:
+
 - ✅ **服务器无需数据库** ⭐
 - ✅ 每个客户端连接自己的 StarRocks
 - ✅ 数据不离开客户端（安全）
@@ -72,6 +74,7 @@
 ### 场景 1: 远程中心服务器 + 本地数据库（常见）⭐
 
 **情况**:
+
 - 中心服务器部署在云上/远程服务器
 - 每个客户端有自己的 StarRocks 数据库
 - 数据不能离开客户端网络
@@ -79,6 +82,7 @@
 **选择**: **Solution C 模式** ⭐
 
 **服务器端部署**:
+
 ```bash
 # 在远程服务器上
 cd /path/to/gemini-cli/mcp-example
@@ -94,6 +98,7 @@ node index-expert-api-solutionc.js
 ```
 
 **客户端配置**:
+
 ```bash
 # 在客户端机器上
 cd /path/to/gemini-cli/mcp-example
@@ -121,6 +126,7 @@ EOF
 ### 场景 2: 中心化数据库 + 共享访问
 
 **情况**:
+
 - 所有客户端访问同一个中心数据库
 - 中心服务器可以直接连接数据库
 - 客户端无需数据库访问权限
@@ -128,6 +134,7 @@ EOF
 **选择**: **Complete 模式**
 
 **服务器端部署**:
+
 ```bash
 # 在服务器上
 cd /path/to/gemini-cli/mcp-example
@@ -143,7 +150,6 @@ SR_HOST=localhost  # 或数据库实际地址
 SR_PORT=9030
 SR_USER=root
 SR_PASSWORD=your-password
-SR_DATABASE=information_schema
 EOF
 
 # 启动服务器
@@ -151,6 +157,7 @@ EOF
 ```
 
 **客户端配置**:
+
 ```bash
 # 客户端只需要配置 Thin MCP Server 指向中心 API
 cat > ~/.starrocks-mcp/.env <<EOF
@@ -199,6 +206,7 @@ cd ..
 ### 从 Complete 切换到 Solution C
 
 **服务器端**:
+
 ```bash
 # 1. 停止当前服务器
 pkill -f "node index-expert-api-complete.js"
@@ -211,6 +219,7 @@ node index-expert-api-solutionc.js
 ```
 
 **客户端**:
+
 ```bash
 # 1. 确保已安装 Thin MCP Server
 ls ~/.starrocks-mcp/thin-mcp-server.js
@@ -240,6 +249,7 @@ await connection.end();
 ### 错误 1: ECONNREFUSED (端口 9030)
 
 **错误信息**:
+
 ```
 Error: connect ECONNREFUSED 127.0.0.1:9030
 ```
@@ -247,6 +257,7 @@ Error: connect ECONNREFUSED 127.0.0.1:9030
 **原因**: 服务器端无法连接 StarRocks
 
 **解决**:
+
 1. ✅ 使用 **Solution C 模式**（推荐）
 2. 或在服务器上安装/配置 StarRocks
 3. 或修改 `.env` 中的 `SR_HOST` 指向可访问的数据库
@@ -256,6 +267,7 @@ Error: connect ECONNREFUSED 127.0.0.1:9030
 ### 错误 2: Tool not found or does not support Solution C
 
 **错误信息**:
+
 ```
 Tool not found or does not support Solution C
 ```
@@ -263,6 +275,7 @@ Tool not found or does not support Solution C
 **原因**: 使用了不支持 Solution C 的 Expert
 
 **解决**: 确认该工具已实现 Solution C 支持
+
 ```bash
 # 检查工具列表
 curl http://localhost:3002/api/tools | jq '.tools[] | .name'
@@ -276,11 +289,13 @@ curl http://localhost:3002/api/queries/<tool-name>
 ### 错误 3: Invalid or missing API key
 
 **错误信息**:
+
 ```
 401 Unauthorized: Invalid or missing API key
 ```
 
 **解决**:
+
 ```bash
 # 确认服务器端 API_KEY
 grep API_KEY /path/to/mcp-example/.env

@@ -6,14 +6,15 @@
 
 ### 两种 CLI 的区别
 
-| 特性 | 本地 CLI (start-gemini-cli.sh) | 全局 gemini |
-|------|--------------------------------|-------------|
-| 位置 | ./bundle/gemini.js | ~/.nvm/.../gemini |
-| 支持 DeepSeek | ✅ | ❌ |
-| 支持 MCP | ❌ | ✅ |
-| 需要认证 | DeepSeek API Key | Google API Key/OAuth |
+| 特性          | 本地 CLI (start-gemini-cli.sh) | 全局 gemini          |
+| ------------- | ------------------------------ | -------------------- |
+| 位置          | ./bundle/gemini.js             | ~/.nvm/.../gemini    |
+| 支持 DeepSeek | ✅                             | ❌                   |
+| 支持 MCP      | ❌                             | ✅                   |
+| 需要认证      | DeepSeek API Key               | Google API Key/OAuth |
 
 **矛盾**：
+
 - 想用 DeepSeek → 必须用本地 CLI
 - 想用 MCP → 必须用全局 gemini
 - 本地 CLI 不支持 MCP
@@ -51,11 +52,13 @@ cd /home/disk5/dingkai/github/gemini-cli
 ```
 
 **优点**：
+
 - ✅ 完整的 MCP 支持
 - ✅ 稳定，官方支持
 - ✅ 一切正常工作
 
 **缺点**：
+
 - ❌ 需要 Google API Key
 - ❌ 不能使用 DeepSeek
 
@@ -88,7 +91,6 @@ cd ~/.starrocks-mcp
 export SR_HOST=localhost
 export SR_USER=root
 export SR_PASSWORD=""
-export SR_DATABASE=information_schema
 export SR_PORT=9030
 export CENTRAL_API=http://localhost:3002
 export CENTRAL_API_TOKEN=demo-key
@@ -133,11 +135,13 @@ curl -X POST http://localhost:3002/api/analyze/analyze_storage_health \
 ```
 
 **优点**：
+
 - ✅ 不需要任何 CLI
 - ✅ 直接测试核心功能
 - ✅ 适合调试
 
 **缺点**：
+
 - ❌ 需要手动操作
 - ❌ 没有 AI 理解自然语言
 
@@ -158,10 +162,12 @@ bash start-gemini-cli.sh
 ```
 
 **优点**：
+
 - ✅ 使用 DeepSeek
 - ✅ 立即可用
 
 **缺点**：
+
 - ❌ 没有 MCP/StarRocks 诊断工具
 
 ---
@@ -211,6 +217,7 @@ Google API Key 免费额度很大，对于测试和开发完全够用。
 **核心问题**：全局 `gemini` 不支持 DeepSeek
 
 **解决方案**：
+
 - 最佳：使用 Google API Key + 全局 gemini + MCP
 - 替代：直接使用 HTTP API 测试诊断功能
 - 现状：使用 DeepSeek，不使用 MCP

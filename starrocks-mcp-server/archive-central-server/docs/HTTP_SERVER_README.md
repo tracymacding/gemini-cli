@@ -9,6 +9,7 @@
 ### 完整的 Expert 支持
 
 ✅ **所有 11 个专家模块**：
+
 - 💾 **storage-expert** - 存储健康诊断
 - 🗜️ **compaction-expert** - Compaction 分析
 - 📥 **ingestion-expert** - 数据摄取诊断
@@ -55,7 +56,6 @@ SR_HOST=your-starrocks-host
 SR_PORT=9030
 SR_USER=root
 SR_PASSWORD=your-password
-SR_DATABASE=information_schema
 
 # HTTP 服务器配置
 PORT=3000
@@ -330,7 +330,6 @@ const pool = mysql.createPool({
   host: process.env.SR_HOST,
   user: process.env.SR_USER,
   password: process.env.SR_PASSWORD,
-  database: process.env.SR_DATABASE,
   connectionLimit: 10, // 增加连接池大小
   queueLimit: 0,
   waitForConnections: true,

@@ -3,6 +3,7 @@
 ## ✅ 诊断结果
 
 所有组件检查通过：
+
 - ✅ API 服务器运行正常（3个工具）
 - ✅ Thin MCP Server 已安装并正常
 - ✅ Gemini CLI 配置正确
@@ -34,6 +35,7 @@ gemini
 ```
 
 **期望看到**：
+
 ```
 starrocks-expert: connected
 ```
@@ -47,6 +49,7 @@ starrocks-expert: connected
 ```
 
 **期望看到**：
+
 ```
 starrocks-expert:
   • analyze_storage_health - 全面分析存储健康状况
@@ -79,6 +82,7 @@ starrocks-expert:
 ### 原因 1: Gemini CLI 没有完全重启
 
 **解决**：
+
 ```bash
 # 强制结束所有 gemini 进程
 pkill -9 -f gemini
@@ -93,6 +97,7 @@ gemini
 ### 原因 2: Gemini CLI 版本不支持 MCP
 
 **检查版本**：
+
 ```bash
 gemini --version
 ```
@@ -102,6 +107,7 @@ Gemini CLI 需要支持 MCP (Model Context Protocol)。如果版本过旧，请�
 ### 原因 3: 配置文件格式错误
 
 **验证配置**：
+
 ```bash
 # 检查 JSON 格式是否正确
 cat ~/.gemini/settings.json | jq .
@@ -110,6 +116,7 @@ cat ~/.gemini/settings.json | jq .
 ```
 
 **修复**：
+
 ```bash
 # 备份当前配置
 cp ~/.gemini/settings.json ~/.gemini/settings.json.backup
@@ -134,11 +141,11 @@ cat ~/.starrocks-mcp/.env
 ```
 
 应该包含：
+
 ```bash
 SR_HOST=localhost
 SR_USER=root
 SR_PASSWORD=
-SR_DATABASE=information_schema
 SR_PORT=9030
 CENTRAL_API=http://localhost:3002
 CENTRAL_API_TOKEN=demo-key

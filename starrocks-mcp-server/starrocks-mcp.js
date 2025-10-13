@@ -46,7 +46,6 @@ class ThinMCPServer {
       host: process.env.SR_HOST || 'localhost',
       user: process.env.SR_USER || 'root',
       password: process.env.SR_PASSWORD || '',
-      database: process.env.SR_DATABASE || 'information_schema',
       port: parseInt(process.env.SR_PORT) || 9030,
     };
 
@@ -65,7 +64,7 @@ class ThinMCPServer {
    */
   async getToolsFromAPI() {
     // 检查缓存
-    if (this.toolsCache && (Date.now() - this.cacheTime) < this.cacheTTL) {
+    if (this.toolsCache && Date.now() - this.cacheTime < this.cacheTTL) {
       return this.toolsCache;
     }
 
@@ -79,7 +78,9 @@ class ThinMCPServer {
       const response = await fetch(url, { headers });
 
       if (!response.ok) {
-        throw new Error(`API returned ${response.status}: ${response.statusText}`);
+        throw new Error(
+          `API returned ${response.status}: ${response.statusText}`,
+        );
       }
 
       const data = await response.json();
@@ -117,12 +118,16 @@ class ThinMCPServer {
       const response = await fetch(url, { headers });
 
       if (!response.ok) {
-        throw new Error(`API returned ${response.status}: ${response.statusText}`);
+        throw new Error(
+          `API returned ${response.status}: ${response.statusText}`,
+        );
       }
 
       return await response.json();
     } catch (error) {
-      throw new Error(`Failed to get queries for ${toolName}: ${error.message}`);
+      throw new Error(
+        `Failed to get queries for ${toolName}: ${error.message}`,
+      );
     }
   }
 
@@ -143,7 +148,7 @@ class ThinMCPServer {
           console.error(`Query ${query.id} failed:`, error.message);
           results[query.id] = {
             error: error.message,
-            sql: query.sql.substring(0, 100) + '...'
+            sql: query.sql.substring(0, 100) + '...',
           };
         }
       }
@@ -170,11 +175,13 @@ class ThinMCPServer {
       const response = await fetch(url, {
         method: 'POST',
         headers: headers,
-        body: JSON.stringify({ results })
+        body: JSON.stringify({ results }),
       });
 
       if (!response.ok) {
-        throw new Error(`API returned ${response.status}: ${response.statusText}`);
+        throw new Error(
+          `API returned ${response.status}: ${response.statusText}`,
+        );
       }
 
       return await response.json();
@@ -187,7 +194,15 @@ class ThinMCPServer {
    * 格式化分析报告
    */
   formatAnalysisReport(analysis) {
-    const { expert, storage_health, compaction_health, import_health, diagnosis_results, status, architecture_type } = analysis;
+    const {
+      expert,
+      storage_health,
+      compaction_health,
+      import_health,
+      diagnosis_results,
+      status,
+      architecture_type,
+    } = analysis;
 
     let report = '';
 
@@ -245,19 +260,38 @@ class ThinMCPServer {
     if (expert === 'storage' && storage_health && storage_health.level) {
       report = '💾 StarRocks 存储专家分析报告\n';
       const health = storage_health;
-      const healthEmoji = health.level === 'EXCELLENT' ? '🟢' : health.level === 'GOOD' ? '🟡' : '🔴';
+      const healthEmoji =
+        health.level === 'EXCELLENT'
+          ? '🟢'
+          : health.level === 'GOOD'
+            ? '🟡'
+            : '🔴';
       report += `${healthEmoji} 健康分数: ${health.score || 0}/100 (${health.level})\n`;
       report += `📊 状态: ${health.status || 'UNKNOWN'}\n\n`;
-    } else if (expert === 'compaction' && compaction_health && compaction_health.level) {
+    } else if (
+      expert === 'compaction' &&
+      compaction_health &&
+      compaction_health.level
+    ) {
       report = '🗜️ StarRocks Compaction 专家分析报告\n';
       const health = compaction_health;
-      const healthEmoji = health.level === 'EXCELLENT' ? '🟢' : health.level === 'GOOD' ? '🟡' : '🔴';
+      const healthEmoji =
+        health.level === 'EXCELLENT'
+          ? '🟢'
+          : health.level === 'GOOD'
+            ? '🟡'
+            : '🔴';
       report += `${healthEmoji} 健康分数: ${health.score || 0}/100 (${health.level})\n`;
       report += `📊 状态: ${health.status || 'UNKNOWN'}\n\n`;
     } else if (expert === 'ingestion' && import_health && import_health.level) {
       report = '📥 StarRocks 数据摄取专家分析报告\n';
       const health = import_health;
-      const healthEmoji = health.level === 'EXCELLENT' ? '🟢' : health.level === 'GOOD' ? '🟡' : '🔴';
+      const healthEmoji =
+        health.level === 'EXCELLENT'
+          ? '🟢'
+          : health.level === 'GOOD'
+            ? '🟡'
+            : '🔴';
       report += `${healthEmoji} 健康分数: ${health.score || 0}/100 (${health.level})\n`;
       report += `📊 状态: ${health.status || 'UNKNOWN'}\n\n`;
     }
@@ -286,11 +320,16 @@ class ThinMCPServer {
     }
 
     // 建议
-    if (analysis.professional_recommendations && analysis.professional_recommendations.length > 0) {
+    if (
+      analysis.professional_recommendations &&
+      analysis.professional_recommendations.length > 0
+    ) {
       report += '💡 专业建议 (前3条):\n';
-      analysis.professional_recommendations.slice(0, 3).forEach((rec, index) => {
-        report += `  ${index + 1}. [${rec.priority}] ${rec.title}\n`;
-      });
+      analysis.professional_recommendations
+        .slice(0, 3)
+        .forEach((rec, index) => {
+          report += `  ${index + 1}. [${rec.priority}] ${rec.title}\n`;
+        });
     }
 
     report += '\n📋 详细数据请查看 JSON 输出部分';
@@ -311,7 +350,7 @@ class ThinMCPServer {
         capabilities: {
           tools: {},
         },
-      }
+      },
     );
 
     // 列出工具
@@ -339,7 +378,9 @@ class ThinMCPServer {
         console.error('   SQL execution completed');
 
         // 3. 发送给 API 分析
-        console.error('   Step 3: Sending results to Central API for analysis...');
+        console.error(
+          '   Step 3: Sending results to Central API for analysis...',
+        );
         const analysis = await this.analyzeResultsWithAPI(toolName, results);
         console.error('   Analysis completed\n');
 

@@ -123,7 +123,6 @@ SR_HOST=localhost
 SR_PORT=9030
 SR_USER=root
 SR_PASSWORD=your-password
-SR_DATABASE=information_schema
 
 # Agent 端口
 AGENT_PORT=8080
