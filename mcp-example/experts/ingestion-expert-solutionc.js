@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/* eslint-disable no-undef */
-
 import { StarRocksIngestionExpert } from './ingestion-expert.js';
 
 class StarRocksIngestionExpertSolutionC extends StarRocksIngestionExpert {

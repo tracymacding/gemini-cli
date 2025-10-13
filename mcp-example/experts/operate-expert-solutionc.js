@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/* eslint-disable no-undef */
-
 import { StarRocksOperateExpert } from './operate-expert.js';
 
 class StarRocksOperateExpertSolutionC extends StarRocksOperateExpert {

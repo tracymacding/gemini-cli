@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/* eslint-disable no-undef */
-
 import { StarRocksTableSchemaExpert } from './table-schema-expert.js';
 
 class StarRocksTableSchemaExpertSolutionC extends StarRocksTableSchemaExpert {

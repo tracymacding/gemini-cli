@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/* eslint-disable no-undef */
-
 import { StarRocksLogExpert } from './log-expert.js';
 
 class StarRocksLogExpertSolutionC extends StarRocksLogExpert {

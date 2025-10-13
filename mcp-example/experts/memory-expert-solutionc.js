@@ -25,7 +25,7 @@ class StarRocksMemoryExpertSolutionC extends StarRocksMemoryExpert {
   /**
    * 获取内存分析的查询（SQL）
    */
-  getMemoryQueries(args) {
+  getMemoryQueries() {
     const queries = [];
 
     // 1. 获取 BE 节点信息

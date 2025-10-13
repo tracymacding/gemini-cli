@@ -25,7 +25,7 @@ class StarRocksTransactionExpertSolutionC extends StarRocksTransactionExpert {
   /**
    * 获取事务分析的查询（SQL + Prometheus）
    */
-  getTransactionQueries(args) {
+  getTransactionQueries() {
     const queries = [];
 
     // 1. 获取数据库列表（SQL）

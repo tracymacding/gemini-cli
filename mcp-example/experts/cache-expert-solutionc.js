@@ -36,7 +36,7 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
   /**
    * 获取缓存性能分析的 SQL 查询
    */
-  getCachePerformanceQueries(args) {
+  getCachePerformanceQueries() {
     return [
       {
         id: 'run_mode',
@@ -190,7 +190,7 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
   /**
    * 分析缓存性能（基于 SQL 查询结果）
    */
-  analyzeCachePerformance(results, args) {
+  analyzeCachePerformance(results) {
     const { run_mode, compute_nodes, cache_metrics } = results;
 
     // 检测架构类型
