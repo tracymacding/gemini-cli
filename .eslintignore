@@ -1,0 +1,13 @@
+# Archive directories - old code not actively maintained
+starrocks-mcp-server/archive-central-server/
+
+# Build outputs
+bundle/
+dist/
+build/
+
+# Dependencies
+node_modules/
+
+# Test coverage
+coverage/

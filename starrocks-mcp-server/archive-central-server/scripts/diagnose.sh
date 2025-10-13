@@ -84,7 +84,7 @@ else
     echo -e "${RED}   ❌ 安装目录不存在: $MCP_DIR${NC}"
     echo -e "${YELLOW}   💡 解决方案:${NC}"
     echo "      cd $(pwd)"
-    echo "      ./install-thin-mcp.sh"
+    echo "      ./install-starrocks-mcp.sh"
     ISSUES+=("Thin MCP Server 未安装")
 fi
 echo
@@ -226,7 +226,7 @@ else
     echo
     echo "快速修复脚本:"
     echo "  # 重新安装客户端"
-    echo "  cd $(pwd) && ./install-thin-mcp.sh"
+    echo "  cd $(pwd) && ./install-starrocks-mcp.sh"
     echo
     echo "  # 重启 API 服务器"
     echo "  cd $(pwd) && ./start-api-server.sh"

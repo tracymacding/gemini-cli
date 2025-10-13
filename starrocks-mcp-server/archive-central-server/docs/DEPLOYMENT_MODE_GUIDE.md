@@ -97,7 +97,7 @@ node index-expert-api-solutionc.js
 ```bash
 # 在客户端机器上
 cd /path/to/gemini-cli/mcp-example
-./install-thin-mcp.sh
+./install-starrocks-mcp.sh
 
 # 配置 Thin MCP Server
 cat > ~/.starrocks-mcp/.env <<EOF
@@ -177,7 +177,7 @@ export API_PORT=3002
 node index-expert-api-solutionc.js &
 
 # 2. 配置 Thin MCP Server
-./install-thin-mcp.sh
+./install-starrocks-mcp.sh
 cat > ~/.starrocks-mcp/.env <<EOF
 CENTRAL_API_URL=http://localhost:3002
 CENTRAL_API_KEY=demo-key
@@ -368,7 +368,7 @@ cd /root/gemini-cli/mcp-example
 # - 数据不离开本地网络
 
 cd ~/my-workspace
-./install-thin-mcp.sh
+./install-starrocks-mcp.sh
 # 配置 ~/.starrocks-mcp/.env
 # 配置 ~/.gemini/settings.json
 # 启动 Gemini CLI

@@ -64,13 +64,13 @@ echo "📥 Installing files..."
 # Assuming this script is in the mcp-example directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Copy Thin MCP Server
-if [ -f "$SCRIPT_DIR/thin-mcp-server.js" ]; then
-    cp "$SCRIPT_DIR/thin-mcp-server.js" "$INSTALL_DIR/"
-    chmod +x "$INSTALL_DIR/thin-mcp-server.js"
-    echo -e "${GREEN}✅ Copied thin-mcp-server.js${NC}"
+# Copy StarRocks MCP Server
+if [ -f "$SCRIPT_DIR/starrocks-mcp.js" ]; then
+    cp "$SCRIPT_DIR/starrocks-mcp.js" "$INSTALL_DIR/"
+    chmod +x "$INSTALL_DIR/starrocks-mcp.js"
+    echo -e "${GREEN}✅ Copied starrocks-mcp.js${NC}"
 else
-    echo -e "${RED}❌ thin-mcp-server.js not found${NC}"
+    echo -e "${RED}❌ starrocks-mcp.js not found${NC}"
     exit 1
 fi
 
@@ -125,7 +125,7 @@ cat > "$INSTALL_DIR/GEMINI_CONFIG_EXAMPLE.json" <<EOF
   "mcpServers": {
     "starrocks-expert": {
       "command": "node",
-      "args": ["$INSTALL_DIR/thin-mcp-server.js"],
+      "args": ["$INSTALL_DIR/starrocks-mcp.js"],
       "env": {
         "SR_HOST": "localhost",
         "SR_USER": "root",

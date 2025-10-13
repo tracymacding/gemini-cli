@@ -174,14 +174,14 @@ pm2 describe starrocks-api
 
 ```bash
 # 方式 1：从你的服务器下载
-curl -O https://api.your-domain.com/install-thin-mcp.sh
-chmod +x install-thin-mcp.sh
-./install-thin-mcp.sh
+curl -O https://api.your-domain.com/install-starrocks-mcp.sh
+chmod +x install-starrocks-mcp.sh
+./install-starrocks-mcp.sh
 
 # 方式 2：如果客户有 Git 仓库访问权限
 git clone https://github.com/your-repo/starrocks-mcp.git
 cd starrocks-mcp/mcp-example
-./install-thin-mcp.sh
+./install-starrocks-mcp.sh
 ```
 
 **安装脚本会**：
@@ -859,7 +859,7 @@ async executeQueries(queries) {
 mcp-example/
 ├── index-expert-api.js          # 中心 REST API 服务器
 ├── thin-mcp-server.js            # 本地 Thin MCP Server
-├── install-thin-mcp.sh           # 客户端一键安装脚本
+├── install-starrocks-mcp.sh           # 客户端一键安装脚本
 ├── package.json                  # 依赖管理
 ├── .env.example                  # 环境变量模板
 ├── SOLUTION_C_GUIDE.md           # 本使用指南
@@ -887,7 +887,7 @@ pm2 logs starrocks-api         # 查看日志
 pm2 restart starrocks-api      # 重启服务
 
 # 客户端
-./install-thin-mcp.sh          # 安装
+./install-starrocks-mcp.sh          # 安装
 nano ~/.starrocks-mcp/.env     # 配置
 nano ~/.gemini/settings.json   # 配置 Gemini CLI
 gemini                         # 启动 Gemini CLI
