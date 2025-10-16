@@ -162,7 +162,7 @@ class ThinMCPServer {
   /**
    * 发送结果给中心 API 进行分析
    */
-  async analyzeResultsWithAPI(toolName, results) {
+  async analyzeResultsWithAPI(toolName, results, args = {}) {
     try {
       const url = `${this.centralAPI}/api/analyze/${toolName}`;
       const headers = {
@@ -175,7 +175,7 @@ class ThinMCPServer {
       const response = await fetch(url, {
         method: 'POST',
         headers: headers,
-        body: JSON.stringify({ results }),
+        body: JSON.stringify({ results, args }),
       });
 
       if (!response.ok) {
@@ -202,63 +202,70 @@ class ThinMCPServer {
       diagnosis_results,
       status,
       architecture_type,
+      report,
     } = analysis;
 
-    let report = '';
-
-    // 处理特殊工具：存储放大分析
-    if (status === 'not_applicable') {
-      report = '⚠️  ' + analysis.message + '\n';
-      report += '\n📋 详细数据请查看 JSON 输出部分';
+    // 如果 analysis 已经包含格式化的 report，直接使用
+    if (report && typeof report === 'string') {
       return report;
     }
 
+    let formattedReport = '';
+
+    // 处理特殊工具：存储放大分析
+    if (status === 'not_applicable') {
+      formattedReport = '⚠️  ' + analysis.message + '\n';
+      formattedReport += '\n📋 详细数据请查看 JSON 输出部分';
+      return formattedReport;
+    }
+
     if (status === 'error') {
-      report = '❌ 分析失败: ' + analysis.error + '\n';
-      return report;
+      formattedReport =
+        '❌ 分析失败: ' + (analysis.error || analysis.message) + '\n';
+      return formattedReport;
     }
 
     // 处理存储放大分析
     if (analysis.storage_amplification) {
-      report = '📊 StarRocks 存储空间放大分析报告\n';
+      formattedReport = '📊 StarRocks 存储空间放大分析报告\n';
       if (architecture_type) {
-        report += `🏗️  架构类型: ${architecture_type === 'shared_data' ? '存算分离' : '存算一体'}\n\n`;
+        formattedReport += `🏗️  架构类型: ${architecture_type === 'shared_data' ? '存算分离' : '存算一体'}\n\n`;
       }
 
       const amp = analysis.storage_amplification;
       if (amp.amplification_ratio && amp.amplification_ratio !== '0') {
         const ratio = parseFloat(amp.amplification_ratio);
         const ampEmoji = ratio > 2.0 ? '🔴' : ratio > 1.5 ? '🟡' : '🟢';
-        report += `${ampEmoji} 存储放大率: ${amp.amplification_ratio}x\n`;
-        report += `   用户数据: ${amp.total_data_size_gb} GB\n`;
-        report += `   对象存储: ${amp.total_storage_size_gb} GB\n\n`;
+        formattedReport += `${ampEmoji} 存储放大率: ${amp.amplification_ratio}x\n`;
+        formattedReport += `   用户数据: ${amp.total_data_size_gb} GB\n`;
+        formattedReport += `   对象存储: ${amp.total_storage_size_gb} GB\n\n`;
       }
 
       // 问题
       if (analysis.issues && analysis.issues.length > 0) {
-        report += '⚠️  发现的问题:\n';
+        formattedReport += '⚠️  发现的问题:\n';
         analysis.issues.forEach((issue, index) => {
           const emoji = issue.severity === 'critical' ? '🔴' : '🟡';
-          report += `  ${emoji} ${index + 1}. ${issue.message}\n`;
+          formattedReport += `  ${emoji} ${index + 1}. ${issue.message}\n`;
         });
-        report += '\n';
+        formattedReport += '\n';
       }
 
       // 建议
       if (analysis.recommendations && analysis.recommendations.length > 0) {
-        report += '💡 优化建议:\n';
+        formattedReport += '💡 优化建议:\n';
         analysis.recommendations.slice(0, 3).forEach((rec, index) => {
-          report += `  ${index + 1}. [${rec.priority}] ${rec.title}\n`;
+          formattedReport += `  ${index + 1}. [${rec.priority}] ${rec.title}\n`;
         });
       }
 
-      report += '\n📋 详细数据请查看 JSON 输出部分';
-      return report;
+      formattedReport += '\n📋 详细数据请查看 JSON 输出部分';
+      return formattedReport;
     }
 
     // 标题 - 健康分析类工具（增强防御性检查）
     if (expert === 'storage' && storage_health && storage_health.level) {
-      report = '💾 StarRocks 存储专家分析报告\n';
+      formattedReport = '💾 StarRocks 存储专家分析报告\n';
       const health = storage_health;
       const healthEmoji =
         health.level === 'EXCELLENT'
@@ -266,14 +273,14 @@ class ThinMCPServer {
           : health.level === 'GOOD'
             ? '🟡'
             : '🔴';
-      report += `${healthEmoji} 健康分数: ${health.score || 0}/100 (${health.level})\n`;
-      report += `📊 状态: ${health.status || 'UNKNOWN'}\n\n`;
+      formattedReport += `${healthEmoji} 健康分数: ${health.score || 0}/100 (${health.level})\n`;
+      formattedReport += `📊 状态: ${health.status || 'UNKNOWN'}\n\n`;
     } else if (
       expert === 'compaction' &&
       compaction_health &&
       compaction_health.level
     ) {
-      report = '🗜️ StarRocks Compaction 专家分析报告\n';
+      formattedReport = '🗜️ StarRocks Compaction 专家分析报告\n';
       const health = compaction_health;
       const healthEmoji =
         health.level === 'EXCELLENT'
@@ -281,10 +288,10 @@ class ThinMCPServer {
           : health.level === 'GOOD'
             ? '🟡'
             : '🔴';
-      report += `${healthEmoji} 健康分数: ${health.score || 0}/100 (${health.level})\n`;
-      report += `📊 状态: ${health.status || 'UNKNOWN'}\n\n`;
+      formattedReport += `${healthEmoji} 健康分数: ${health.score || 0}/100 (${health.level})\n`;
+      formattedReport += `📊 状态: ${health.status || 'UNKNOWN'}\n\n`;
     } else if (expert === 'ingestion' && import_health && import_health.level) {
-      report = '📥 StarRocks 数据摄取专家分析报告\n';
+      formattedReport = '📥 StarRocks 数据摄取专家分析报告\n';
       const health = import_health;
       const healthEmoji =
         health.level === 'EXCELLENT'
@@ -292,31 +299,52 @@ class ThinMCPServer {
           : health.level === 'GOOD'
             ? '🟡'
             : '🔴';
-      report += `${healthEmoji} 健康分数: ${health.score || 0}/100 (${health.level})\n`;
-      report += `📊 状态: ${health.status || 'UNKNOWN'}\n\n`;
+      formattedReport += `${healthEmoji} 健康分数: ${health.score || 0}/100 (${health.level})\n`;
+      formattedReport += `📊 状态: ${health.status || 'UNKNOWN'}\n\n`;
     }
 
     // 诊断摘要
     if (diagnosis_results) {
-      report += `📋 诊断摘要: ${diagnosis_results.summary}\n`;
-      report += `🔍 发现问题: ${diagnosis_results.total_issues || diagnosis_results.total_jobs || 0}个\n\n`;
+      formattedReport += `📋 诊断摘要: ${diagnosis_results.summary}\n`;
+      formattedReport += `🔍 发现问题: ${diagnosis_results.total_issues || diagnosis_results.total_jobs || 0}个\n\n`;
     }
 
     // 关键问题
-    if (diagnosis_results.criticals && diagnosis_results.criticals.length > 0) {
-      report += '🔴 严重问题:\n';
+    if (
+      diagnosis_results &&
+      diagnosis_results.criticals &&
+      diagnosis_results.criticals.length > 0
+    ) {
+      formattedReport += '🔴 严重问题:\n';
       diagnosis_results.criticals.slice(0, 3).forEach((issue, index) => {
-        report += `  ${index + 1}. ${issue.message}\n`;
+        formattedReport += `  ${index + 1}. ${issue.message}\n`;
       });
-      report += '\n';
+      formattedReport += '\n';
     }
 
-    if (diagnosis_results.warnings && diagnosis_results.warnings.length > 0) {
-      report += '🟡 警告:\n';
+    if (
+      diagnosis_results &&
+      diagnosis_results.warnings &&
+      diagnosis_results.warnings.length > 0
+    ) {
+      formattedReport += '🟡 警告:\n';
       diagnosis_results.warnings.slice(0, 3).forEach((issue, index) => {
-        report += `  ${index + 1}. ${issue.message}\n`;
+        formattedReport += `  ${index + 1}. ${issue.message}\n`;
       });
-      report += '\n';
+      formattedReport += '\n';
+    }
+
+    // 其他信息（包含分区详情等）
+    if (
+      diagnosis_results &&
+      diagnosis_results.issues &&
+      diagnosis_results.issues.length > 0
+    ) {
+      formattedReport += 'ℹ️  详细信息:\n';
+      diagnosis_results.issues.forEach((issue, index) => {
+        formattedReport += `  ${index + 1}. ${issue.message}\n`;
+      });
+      formattedReport += '\n';
     }
 
     // 建议
@@ -324,17 +352,17 @@ class ThinMCPServer {
       analysis.professional_recommendations &&
       analysis.professional_recommendations.length > 0
     ) {
-      report += '💡 专业建议 (前3条):\n';
+      formattedReport += '💡 专业建议 (前3条):\n';
       analysis.professional_recommendations
         .slice(0, 3)
         .forEach((rec, index) => {
-          report += `  ${index + 1}. [${rec.priority}] ${rec.title}\n`;
+          formattedReport += `  ${index + 1}. [${rec.priority}] ${rec.title}\n`;
         });
     }
 
-    report += '\n📋 详细数据请查看 JSON 输出部分';
+    formattedReport += '\n📋 详细数据请查看 JSON 输出部分';
 
-    return report;
+    return formattedReport;
   }
 
   /**
@@ -365,23 +393,35 @@ class ThinMCPServer {
 
       try {
         console.error(`\n🔧 Executing tool: ${toolName}`);
-        console.error(`   Arguments:`, JSON.stringify(args));
+        console.error(`   Arguments:`, JSON.stringify(args).substring(0, 200));
 
         // 1. 从 API 获取需要执行的 SQL
         console.error('   Step 1: Fetching SQL queries from Central API...');
         const queryDef = await this.getQueriesFromAPI(toolName);
         console.error(`   Got ${queryDef.queries.length} queries to execute`);
 
-        // 2. 执行 SQL
-        console.error('   Step 2: Executing SQL queries locally...');
-        const results = await this.executeQueries(queryDef.queries);
-        console.error('   SQL execution completed');
+        let results = {};
+
+        // 2. 执行 SQL（如果有的话）
+        if (queryDef.queries.length > 0) {
+          console.error('   Step 2: Executing SQL queries locally...');
+          results = await this.executeQueries(queryDef.queries);
+          console.error('   SQL execution completed');
+        } else {
+          console.error(
+            '   Step 2: No SQL queries to execute (args-only tool)',
+          );
+        }
 
         // 3. 发送给 API 分析
         console.error(
           '   Step 3: Sending results to Central API for analysis...',
         );
-        const analysis = await this.analyzeResultsWithAPI(toolName, results);
+        const analysis = await this.analyzeResultsWithAPI(
+          toolName,
+          results,
+          args,
+        );
         console.error('   Analysis completed\n');
 
         // 4. 格式化报告
