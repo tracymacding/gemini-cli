@@ -107,15 +107,26 @@ class ThinMCPServer {
   /**
    * 从中心 API 获取 SQL 查询定义
    */
-  async getQueriesFromAPI(toolName) {
+  async getQueriesFromAPI(toolName, args = {}) {
     try {
-      const url = `${this.centralAPI}/api/queries/${toolName}`;
+      // 构建 URL，将 args 作为 query parameters
+      const url = new URL(`${this.centralAPI}/api/queries/${toolName}`);
+
+      // 将 args 添加到 query string
+      Object.keys(args).forEach((key) => {
+        if (args[key] !== undefined && args[key] !== null) {
+          url.searchParams.append(key, args[key]);
+        }
+      });
+
       const headers = {};
       if (this.apiToken) {
         headers['X-API-Key'] = this.apiToken;
       }
 
-      const response = await fetch(url, { headers });
+      console.error(`   Fetching queries from: ${url.toString()}`);
+
+      const response = await fetch(url.toString(), { headers });
 
       if (!response.ok) {
         throw new Error(
@@ -395,9 +406,9 @@ class ThinMCPServer {
         console.error(`\n🔧 Executing tool: ${toolName}`);
         console.error(`   Arguments:`, JSON.stringify(args).substring(0, 200));
 
-        // 1. 从 API 获取需要执行的 SQL
+        // 1. 从 API 获取需要执行的 SQL（传递 args 参数）
         console.error('   Step 1: Fetching SQL queries from Central API...');
-        const queryDef = await this.getQueriesFromAPI(toolName);
+        const queryDef = await this.getQueriesFromAPI(toolName, args);
         console.error(`   Got ${queryDef.queries.length} queries to execute`);
 
         let results = {};
