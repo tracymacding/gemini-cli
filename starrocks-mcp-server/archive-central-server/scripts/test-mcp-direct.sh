@@ -11,7 +11,7 @@ echo "===================="
 echo ""
 
 # 检查 API 服务器
-if ! curl -s http://localhost:3002/health > /dev/null; then
+if ! curl -s http://localhost:80/health > /dev/null; then
     echo "❌ API 服务器未运行"
     echo "请先启动: cd mcp-example && ./start-api-server.sh"
     exit 1

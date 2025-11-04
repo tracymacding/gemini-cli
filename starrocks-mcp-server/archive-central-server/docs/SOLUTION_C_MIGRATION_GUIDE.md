@@ -360,7 +360,7 @@ getQueriesForTool(toolName, args) {
 ### 1. 测试 SQL 定义
 
 ```bash
-curl http://localhost:3002/api/queries/storage_expert_analysis
+curl http://localhost:80/api/queries/storage_expert_analysis
 ```
 
 **Expected Output:**
@@ -382,7 +382,7 @@ curl http://localhost:3002/api/queries/storage_expert_analysis
 ### 2. 测试分析功能
 
 ```bash
-curl -X POST http://localhost:3002/api/analyze/storage_expert_analysis \
+curl -X POST http://localhost:80/api/analyze/storage_expert_analysis \
   -H "Content-Type: application/json" \
   -d '{
     "results": {

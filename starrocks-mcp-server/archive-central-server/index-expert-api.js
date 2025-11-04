@@ -27,7 +27,7 @@ import express from 'express';
 
 class StarRocksCentralAPI {
   constructor(options = {}) {
-    this.port = options.port || process.env.API_PORT || 3002;
+    this.port = options.port || process.env.API_PORT || 80;
     this.apiKey = options.apiKey || process.env.API_KEY;
 
     // 初始化 Express 应用

@@ -375,7 +375,7 @@ Thin MCP Server 代码: ~250 行 ✅
 ```bash
 # 1. 配置 API
 cd mcp-example
-export API_PORT=3002
+export API_PORT=80
 export API_KEY=your-secure-api-key
 
 # 2. 启动 API 服务器

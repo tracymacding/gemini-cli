@@ -31,7 +31,7 @@ import { StarRocksExpertCoordinator } from './experts/expert-coordinator.js';
 class SolutionCCentralAPI {
   constructor() {
     this.app = express();
-    this.port = process.env.API_PORT || 3002;
+    this.port = process.env.API_PORT || 80;
     this.host = process.env.API_HOST || '0.0.0.0'; // 默认监听所有网络接口
     this.apiKey = process.env.API_KEY || '';
 

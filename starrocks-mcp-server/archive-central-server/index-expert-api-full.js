@@ -28,7 +28,7 @@ import mysql from 'mysql2/promise';
 class CentralAPIServer {
   constructor() {
     this.app = express();
-    this.port = process.env.API_PORT || 3002;
+    this.port = process.env.API_PORT || 80;
     this.apiKey = process.env.API_KEY || '';
 
     // 初始化 Expert Coordinator（整合所有 expert）

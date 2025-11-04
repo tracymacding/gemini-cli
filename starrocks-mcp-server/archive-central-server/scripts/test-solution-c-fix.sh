@@ -5,7 +5,7 @@ echo "================================"
 echo ""
 
 echo "1️⃣ 检查中心 API 服务器状态..."
-health=$(curl -s http://localhost:3002/health)
+health=$(curl -s http://localhost:80/health)
 if [ $? -eq 0 ]; then
     echo "   ✅ 中心 API 服务器运行中"
     echo "   $(echo $health | python3 -c 'import sys, json; data=json.load(sys.stdin); print(f\"Tools: {data[\"tools\"]}, Mode: {data[\"mode\"]}\")')"
@@ -16,7 +16,7 @@ fi
 echo ""
 
 echo "2️⃣ 检查工具描述是否完整..."
-desc_length=$(curl -s http://localhost:3002/api/tools -H "X-API-Key: demo-key" | \
+desc_length=$(curl -s http://localhost:80/api/tools -H "X-API-Key: demo-key" | \
     python3 -c 'import sys, json; data=json.load(sys.stdin); tool=[t for t in data["tools"] if t["name"]=="analyze_storage_amplification"][0]; print(len(tool["description"]))')
 
 if [ "$desc_length" -gt 100 ]; then
@@ -27,7 +27,7 @@ fi
 echo ""
 
 echo "3️⃣ 检查是否包含示例问题..."
-has_example=$(curl -s http://localhost:3002/api/tools -H "X-API-Key: demo-key" | \
+has_example=$(curl -s http://localhost:80/api/tools -H "X-API-Key: demo-key" | \
     python3 -c 'import sys, json; data=json.load(sys.stdin); tool=[t for t in data["tools"] if t["name"]=="analyze_storage_amplification"][0]; print("帮我分析系统存储空间放大情况" in tool["description"])')
 
 if [ "$has_example" == "True" ]; then

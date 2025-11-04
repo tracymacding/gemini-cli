@@ -20,9 +20,9 @@ Thin MCP Server (本地 - 协调者)
 
 1. **用户请求**：在 Gemini CLI 中输入 "请分析缓存性能"
 2. **Thin MCP Server**：接收请求，调用 `analyze_cache_performance` 工具
-3. **请求 API**：`GET http://localhost:3002/api/queries/analyze_cache_performance`
+3. **请求 API**：`GET http://localhost:80/api/queries/analyze_cache_performance`
 4. **中心 API**：返回工具信息（占位 SQL）
-5. **执行工具**：`POST http://localhost:3002/api/analyze/analyze_cache_performance`
+5. **执行工具**：`POST http://localhost:80/api/analyze/analyze_cache_performance`
 6. **中心 API**：在服务器端连接数据库，调用 cache-expert，执行分析
 7. **返回结果**：分析报告 → Thin MCP Server → Gemini CLI → 用户
 
@@ -45,7 +45,7 @@ Thin MCP Server (本地 - 协调者)
 cd /home/disk5/dingkai/github/gemini-cli/mcp-example
 
 # 启动中心 API（包含所有 33 个工具）
-export API_PORT=3002
+export API_PORT=80
 export API_KEY=demo-key
 export SR_HOST=localhost
 export SR_USER=root
@@ -60,9 +60,9 @@ node index-expert-api-complete.js
 🚀 StarRocks Central API Server (Complete)
 ================================================
 
-   📡 API endpoint:     http://localhost:3002
-   ❤️  Health check:    http://localhost:3002/health
-   🔧 List tools:       http://localhost:3002/api/tools
+   📡 API endpoint:     http://localhost:80
+   ❤️  Health check:    http://localhost:80/health
+   🔧 List tools:       http://localhost:80/api/tools
 
    🔑 Authentication:   Enabled
    📦 Tools loaded:     33
@@ -251,7 +251,7 @@ Thin MCP Server 输出:
       "command": "node",
       "args": ["/home/disk1/dingkai/.starrocks-mcp/thin-mcp-server.js"],
       "env": {
-        "CENTRAL_API": "http://localhost:3002",
+        "CENTRAL_API": "http://localhost:80",
         "CENTRAL_API_TOKEN": "demo-key",
         "SR_HOST": "localhost",
         "SR_USER": "root",
@@ -277,7 +277,7 @@ Thin MCP Server 输出:
 
 **检查**:
 ```bash
-curl http://localhost:3002/health -H "X-API-Key: demo-key"
+curl http://localhost:80/health -H "X-API-Key: demo-key"
 ```
 
 **解决**: 启动中心 API 服务器
@@ -310,7 +310,7 @@ mysql -h localhost -P 9030 -u root -p
 **检查**:
 ```bash
 # 检查 thin-mcp-server 是否能获取工具列表
-curl http://localhost:3002/api/tools -H "X-API-Key: demo-key"
+curl http://localhost:80/api/tools -H "X-API-Key: demo-key"
 ```
 
 **解决**: 确认 API Key 配置正确。
@@ -343,7 +343,7 @@ curl http://localhost:3002/api/tools -H "X-API-Key: demo-key"
 
 1. **中心 API 服务器**
    - 文件: `index-expert-api-complete.js`
-   - 端口: 3002
+   - 端口: 80
    - 工具: 所有 33 个（包括 cache-expert）
 
 2. **Thin MCP Server**
@@ -359,7 +359,7 @@ curl http://localhost:3002/api/tools -H "X-API-Key: demo-key"
 ```bash
 # 终端 1: 启动中心 API
 cd /home/disk5/dingkai/github/gemini-cli/mcp-example
-export API_PORT=3002 API_KEY=demo-key SR_HOST=localhost SR_USER=root SR_PASSWORD=""
+export API_PORT=80 API_KEY=demo-key SR_HOST=localhost SR_USER=root SR_PASSWORD=""
 node index-expert-api-complete.js
 
 # 终端 2: 启动 Gemini CLI

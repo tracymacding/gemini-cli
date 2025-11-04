@@ -92,7 +92,7 @@ export SR_HOST=localhost
 export SR_USER=root
 export SR_PASSWORD=""
 export SR_PORT=9030
-export CENTRAL_API=http://localhost:3002
+export CENTRAL_API=http://localhost:80
 export CENTRAL_API_TOKEN=demo-key
 
 # 测试 MCP 服务器
@@ -115,14 +115,14 @@ EOF
 
 ```bash
 # 1. 获取 SQL 定义
-curl http://localhost:3002/api/queries/analyze_storage_health \
+curl http://localhost:80/api/queries/analyze_storage_health \
   -H "X-API-Key: demo-key" | jq .
 
 # 2. 手动执行 SQL（连接本地 StarRocks）
 mysql -h localhost -P 9030 -u root -e "SHOW BACKENDS;"
 
 # 3. 将结果发送给 API 分析
-curl -X POST http://localhost:3002/api/analyze/analyze_storage_health \
+curl -X POST http://localhost:80/api/analyze/analyze_storage_health \
   -H "X-API-Key: demo-key" \
   -H "Content-Type: application/json" \
   -d '{

@@ -58,7 +58,7 @@ cd mcp-example
 
 # 配置环境变量
 cat > .env <<EOF
-API_PORT=3002
+API_PORT=80
 API_KEY=your-secure-api-key-change-me
 EOF
 
@@ -73,14 +73,14 @@ pm2 start index-expert-api.js --name starrocks-api
 
 ```bash
 # 健康检查
-curl http://localhost:3002/health
+curl http://localhost:80/health
 
 # 列出可用工具
-curl http://localhost:3002/api/tools \
+curl http://localhost:80/api/tools \
   -H "X-API-Key: your-secure-api-key-change-me"
 
 # 获取某个工具的 SQL
-curl http://localhost:3002/api/queries/analyze_storage_health \
+curl http://localhost:80/api/queries/analyze_storage_health \
   -H "X-API-Key: your-secure-api-key-change-me"
 ```
 
@@ -118,7 +118,7 @@ module.exports = {
     max_memory_restart: '1G',
     env: {
       NODE_ENV: 'production',
-      API_PORT: 3002,
+      API_PORT: 80,
       API_KEY: process.env.API_KEY || 'your-secure-api-key'
     },
     error_file: './logs/api-err.log',
@@ -145,7 +145,7 @@ server {
     ssl_certificate_key /path/to/key.pem;
 
     location / {
-        proxy_pass http://localhost:3002;
+        proxy_pass http://localhost:80;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -912,7 +912,7 @@ mcp-example/
 
 | 端口 | 用途                    | 部署位置         |
 | ---- | ----------------------- | ---------------- |
-| 3002 | 中心 REST API           | 服务端（你维护） |
+| 80 | 中心 REST API           | 服务端（你维护） |
 | 9030 | StarRocks FE            | 客户内网         |
 | N/A  | Thin MCP Server (Stdio) | 客户本地         |
 

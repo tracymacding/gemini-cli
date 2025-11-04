@@ -116,7 +116,7 @@ cat /home/disk5/dingkai/github/gemini-cli/.env | grep DEEPSEEK_API_KEY
 ### 检查 API 服务器
 
 ```bash
-curl http://localhost:3002/health
+curl http://localhost:80/health
 ```
 
 应该返回：`{"status":"healthy",...}`

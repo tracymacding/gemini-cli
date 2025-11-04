@@ -147,7 +147,7 @@ SR_HOST=localhost
 SR_USER=root
 SR_PASSWORD=
 SR_PORT=9030
-CENTRAL_API=http://localhost:3002
+CENTRAL_API=http://localhost:80
 CENTRAL_API_TOKEN=demo-key
 ```
 
@@ -213,10 +213,10 @@ cd /home/disk5/dingkai/github/gemini-cli/mcp-example
 ./diagnose.sh
 
 # 检查 API 服务器
-curl http://localhost:3002/health
+curl http://localhost:80/health
 
 # 检查工具列表
-curl http://localhost:3002/api/tools -H "X-API-Key: demo-key" | jq '.tools[].name'
+curl http://localhost:80/api/tools -H "X-API-Key: demo-key" | jq '.tools[].name'
 
 # 检查 Gemini 配置
 cat ~/.gemini/settings.json | jq '.mcpServers."starrocks-expert"'

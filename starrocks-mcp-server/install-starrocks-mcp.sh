@@ -106,7 +106,7 @@ SR_PASSWORD=
 SR_PORT=9030
 
 # 中心 API 配置
-CENTRAL_API=http://localhost:3002
+CENTRAL_API=http://localhost:80
 CENTRAL_API_TOKEN=
 
 # 注意事项：
@@ -130,7 +130,7 @@ cat > "$INSTALL_DIR/GEMINI_CONFIG_EXAMPLE.json" <<EOF
         "SR_USER": "root",
         "SR_PASSWORD": "your_password",
         "SR_PORT": "9030",
-        "CENTRAL_API": "http://localhost:3002",
+        "CENTRAL_API": "http://localhost:80",
         "CENTRAL_API_TOKEN": ""
       }
     }

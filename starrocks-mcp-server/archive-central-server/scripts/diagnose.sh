@@ -22,15 +22,15 @@ ISSUES=()
 # 1. 检查 API 服务器
 echo -e "${BLUE}1️⃣  检查中心 API 服务器${NC}"
 echo "-----------------------------------"
-if curl -s http://localhost:3002/health > /dev/null 2>&1; then
-    HEALTH=$(curl -s http://localhost:3002/health | jq -r '.status')
-    UPTIME=$(curl -s http://localhost:3002/health | jq -r '.uptime')
+if curl -s http://localhost:80/health > /dev/null 2>&1; then
+    HEALTH=$(curl -s http://localhost:80/health | jq -r '.status')
+    UPTIME=$(curl -s http://localhost:80/health | jq -r '.uptime')
     echo -e "${GREEN}   ✅ API 服务器运行正常${NC}"
     echo "      状态: $HEALTH"
     echo "      运行时间: ${UPTIME}秒"
 
     # 检查工具列表
-    TOOLS_RESPONSE=$(curl -s http://localhost:3002/api/tools -H "X-API-Key: demo-key")
+    TOOLS_RESPONSE=$(curl -s http://localhost:80/api/tools -H "X-API-Key: demo-key")
     if echo "$TOOLS_RESPONSE" | jq -e '.error' > /dev/null 2>&1; then
         ERROR_MSG=$(echo "$TOOLS_RESPONSE" | jq -r '.message')
         echo -e "${RED}   ❌ API 认证失败: $ERROR_MSG${NC}"
@@ -153,7 +153,7 @@ if [ -f ~/.starrocks-mcp/thin-mcp-server.js ] && [ -f ~/.gemini/settings.json ];
     SR_PASSWORD=$(jq -r '.mcpServers."starrocks-expert".env.SR_PASSWORD // ""' "$GEMINI_CONFIG" 2>/dev/null)
     SR_DATABASE=$(jq -r '.mcpServers."starrocks-expert".env.SR_DATABASE // "information_schema"' "$GEMINI_CONFIG" 2>/dev/null)
     SR_PORT=$(jq -r '.mcpServers."starrocks-expert".env.SR_PORT // "9030"' "$GEMINI_CONFIG" 2>/dev/null)
-    CENTRAL_API=$(jq -r '.mcpServers."starrocks-expert".env.CENTRAL_API // "http://localhost:3002"' "$GEMINI_CONFIG" 2>/dev/null)
+    CENTRAL_API=$(jq -r '.mcpServers."starrocks-expert".env.CENTRAL_API // "http://localhost:80"' "$GEMINI_CONFIG" 2>/dev/null)
     CENTRAL_API_TOKEN=$(jq -r '.mcpServers."starrocks-expert".env.CENTRAL_API_TOKEN // ""' "$GEMINI_CONFIG" 2>/dev/null)
 
     # 测试 MCP 服务器

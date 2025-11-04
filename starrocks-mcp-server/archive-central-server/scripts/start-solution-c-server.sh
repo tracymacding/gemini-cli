@@ -13,14 +13,14 @@ echo ""
 cd "$(dirname "$0")"
 
 # 检查端口是否被占用
-if lsof -Pi :3002 -sTCP:LISTEN -t >/dev/null 2>&1 ; then
-    echo "⚠️  端口 3002 已被占用，正在停止旧进程..."
+if lsof -Pi :80 -sTCP:LISTEN -t >/dev/null 2>&1 ; then
+    echo "⚠️  端口 80 已被占用，正在停止旧进程..."
     pkill -f "node index-expert-api"
     sleep 2
 fi
 
 # 启动服务器
-echo "📡 服务器将运行在 http://localhost:3002"
+echo "📡 服务器将运行在 http://localhost:80"
 echo ""
 
 node index-expert-api-solutionc.js

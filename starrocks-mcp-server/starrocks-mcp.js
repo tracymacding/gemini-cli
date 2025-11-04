@@ -38,7 +38,7 @@ import mysql from 'mysql2/promise';
 class ThinMCPServer {
   constructor() {
     // 中心 API 配置
-    this.centralAPI = process.env.CENTRAL_API || 'http://localhost:3002';
+    this.centralAPI = process.env.CENTRAL_API || 'http://localhost:80';
     this.apiToken = process.env.CENTRAL_API_TOKEN || '';
 
     // 本地数据库配置

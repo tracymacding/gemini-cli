@@ -43,9 +43,9 @@ node index-expert-api-solutionc.js
 🚀 StarRocks Central API Server (Solution C)
 ================================================
 
-   📡 API endpoint:     http://localhost:3002
-   ❤️  Health check:    http://localhost:3002/health
-   🔧 List tools:       http://localhost:3002/api/tools
+   📡 API endpoint:     http://localhost:80
+   ❤️  Health check:    http://localhost:80/health
+   🔧 List tools:       http://localhost:80/api/tools
 
    🔑 Authentication:   Disabled
    📦 Tools loaded:     33
@@ -58,7 +58,7 @@ node index-expert-api-solutionc.js
 ### Step 2: 测试健康检查
 
 ```bash
-curl http://localhost:3002/health
+curl http://localhost:80/health
 ```
 
 **预期输出**:
@@ -75,7 +75,7 @@ curl http://localhost:3002/health
 ### Step 3: 测试 SQL 查询定义
 
 ```bash
-curl http://localhost:3002/api/queries/storage_expert_analysis
+curl http://localhost:80/api/queries/storage_expert_analysis
 ```
 
 **预期输出**:
@@ -104,7 +104,7 @@ curl http://localhost:3002/api/queries/storage_expert_analysis
 ### Step 4: 测试分析功能（模拟客户端发送结果）
 
 ```bash
-curl -X POST http://localhost:3002/api/analyze/storage_expert_analysis \
+curl -X POST http://localhost:80/api/analyze/storage_expert_analysis \
   -H "Content-Type: application/json" \
   -d '{
     "results": {
@@ -299,7 +299,7 @@ curl -X POST http://localhost:3002/api/analyze/storage_expert_analysis \
 node index-expert-api-solutionc.js
 
 # 在另一个终端测试
-curl http://localhost:3002/api/queries/storage_expert_analysis
+curl http://localhost:80/api/queries/storage_expert_analysis
 ```
 
 ### 第2步: 集成到 Coordinator
@@ -319,7 +319,7 @@ this.experts = {
 node index-expert-api-solutionc.js
 
 # 测试是否工作
-curl http://localhost:3002/api/queries/storage_expert_analysis
+curl http://localhost:80/api/queries/storage_expert_analysis
 ```
 
 ### 第4步: 逐个改造其他 Expert

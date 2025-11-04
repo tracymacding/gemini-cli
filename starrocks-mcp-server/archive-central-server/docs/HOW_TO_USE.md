@@ -4,7 +4,7 @@
 
 ✅ **已完成的组件**:
 
-- Central API Server (index-expert-api.js) - 运行中 @ http://localhost:3002
+- Central API Server (index-expert-api.js) - 运行中 @ http://localhost:80
 - Thin MCP Client (thin-mcp-server.js) - 已安装 @ ~/.starrocks-mcp/
 - 安装脚本 (install-starrocks-mcp.sh) - 已测试通过
 - 完整文档 (SOLUTION_C_GUIDE.md, USAGE_DEMO.md)
@@ -29,7 +29,7 @@ SR_PASSWORD=your_actual_password  # 修改为实际密码
 SR_PORT=9030
 
 # Central API 地址（本地测试使用 localhost，生产环境使用实际域名）
-CENTRAL_API=http://localhost:3002
+CENTRAL_API=http://localhost:80
 CENTRAL_API_TOKEN=demo-key
 ```
 
@@ -54,7 +54,7 @@ nano ~/.gemini/settings.json
         "SR_USER": "root",
         "SR_PASSWORD": "your_actual_password",
         "SR_PORT": "9030",
-        "CENTRAL_API": "http://localhost:3002",
+        "CENTRAL_API": "http://localhost:80",
         "CENTRAL_API_TOKEN": "demo-key"
       }
     }
@@ -236,13 +236,13 @@ pm2 restart starrocks-api
 
 ```bash
 # 健康检查
-curl http://localhost:3002/health | jq .
+curl http://localhost:80/health | jq .
 
 # 列出工具
-curl http://localhost:3002/api/tools -H "X-API-Key: demo-key" | jq .
+curl http://localhost:80/api/tools -H "X-API-Key: demo-key" | jq .
 
 # 获取 SQL 定义
-curl http://localhost:3002/api/queries/analyze_storage_health \
+curl http://localhost:80/api/queries/analyze_storage_health \
   -H "X-API-Key: demo-key" | jq .
 ```
 
@@ -277,7 +277,7 @@ cd /home/disk5/dingkai/github/gemini-cli/mcp-example
 ```bash
 # 使用 PM2 管理进程
 cd mcp-example
-export API_PORT=3002
+export API_PORT=80
 export API_KEY=your-secure-random-key
 
 pm2 start index-expert-api.js --name starrocks-api
@@ -296,13 +296,13 @@ server {
     ssl_certificate_key /path/to/key.pem;
 
     location /api/ {
-        proxy_pass http://localhost:3002;
+        proxy_pass http://localhost:80;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 
     location /health {
-        proxy_pass http://localhost:3002;
+        proxy_pass http://localhost:80;
     }
 }
 ```
@@ -376,7 +376,7 @@ gemini
 1. 验证 API 服务器是否运行:
 
    ```bash
-   curl http://localhost:3002/health
+   curl http://localhost:80/health
    ```
 
 2. 检查 API Token 是否正确:

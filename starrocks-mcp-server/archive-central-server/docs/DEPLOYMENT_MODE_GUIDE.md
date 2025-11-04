@@ -92,7 +92,7 @@ cd /path/to/gemini-cli/mcp-example
 
 # 或直接启动
 export API_HOST=0.0.0.0
-export API_PORT=3002
+export API_PORT=80
 export API_KEY=$(openssl rand -hex 32)
 node index-expert-api-solutionc.js
 ```
@@ -107,7 +107,7 @@ cd /path/to/gemini-cli/mcp-example
 # 配置 Thin MCP Server
 cat > ~/.starrocks-mcp/.env <<EOF
 # 远程中心 API
-CENTRAL_API_URL=http://<server-ip>:3002
+CENTRAL_API_URL=http://<server-ip>:80
 CENTRAL_API_KEY=<your-api-key>
 
 # 本地 StarRocks
@@ -142,7 +142,7 @@ cd /path/to/gemini-cli/mcp-example
 # 配置数据库连接
 cat > .env <<EOF
 API_HOST=0.0.0.0
-API_PORT=3002
+API_PORT=80
 API_KEY=$(openssl rand -hex 32)
 
 # StarRocks 数据库配置
@@ -161,7 +161,7 @@ EOF
 ```bash
 # 客户端只需要配置 Thin MCP Server 指向中心 API
 cat > ~/.starrocks-mcp/.env <<EOF
-CENTRAL_API_URL=http://<server-ip>:3002
+CENTRAL_API_URL=http://<server-ip>:80
 CENTRAL_API_KEY=<your-api-key>
 EOF
 ```
@@ -180,13 +180,13 @@ cd /path/to/gemini-cli/mcp-example
 
 # 1. 启动中心服务器
 export API_HOST=127.0.0.1
-export API_PORT=3002
+export API_PORT=80
 node index-expert-api-solutionc.js &
 
 # 2. 配置 Thin MCP Server
 ./install-starrocks-mcp.sh
 cat > ~/.starrocks-mcp/.env <<EOF
-CENTRAL_API_URL=http://localhost:3002
+CENTRAL_API_URL=http://localhost:80
 CENTRAL_API_KEY=demo-key
 SR_HOST=localhost
 SR_PORT=9030
@@ -278,10 +278,10 @@ Tool not found or does not support Solution C
 
 ```bash
 # 检查工具列表
-curl http://localhost:3002/api/tools | jq '.tools[] | .name'
+curl http://localhost:80/api/tools | jq '.tools[] | .name'
 
 # 检查工具是否支持 Solution C
-curl http://localhost:3002/api/queries/<tool-name>
+curl http://localhost:80/api/queries/<tool-name>
 ```
 
 ---
@@ -304,7 +304,7 @@ grep API_KEY /path/to/mcp-example/.env
 grep CENTRAL_API_KEY ~/.starrocks-mcp/.env
 
 # 测试 API Key
-curl http://<server-ip>:3002/health -H "X-API-Key: your-api-key"
+curl http://<server-ip>:80/health -H "X-API-Key: your-api-key"
 ```
 
 ---
@@ -318,12 +318,12 @@ curl http://<server-ip>:3002/health -H "X-API-Key: your-api-key"
 ps aux | grep "node index-expert"
 
 # 方法 2: 检查健康端点
-curl http://localhost:3002/health | jq '.service'
+curl http://localhost:80/health | jq '.service'
 # Complete: "starrocks-central-api-complete"
 # Solution C: "starrocks-central-api-solutionc"
 
 # 方法 3: 检查 mode 字段
-curl http://localhost:3002/health | jq '.mode'
+curl http://localhost:80/health | jq '.mode'
 # Solution C: "Solution C (Client-side SQL Execution)"
 ```
 
@@ -345,10 +345,10 @@ cd /path/to/gemini-cli/mcp-example
 
 ```bash
 # 1. 测试中心 API
-curl http://<server-ip>:3002/health -H "X-API-Key: <your-key>"
+curl http://<server-ip>:80/health -H "X-API-Key: <your-key>"
 
 # 2. 测试获取 SQL 定义（Solution C）
-curl http://<server-ip>:3002/api/queries/analyze_storage_health \
+curl http://<server-ip>:80/api/queries/analyze_storage_health \
   -H "X-API-Key: <your-key>" | jq
 
 # 3. 从客户端测试完整流程

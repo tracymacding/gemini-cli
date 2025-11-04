@@ -41,7 +41,7 @@ echo ""
 
 # 检查 API 服务器
 echo -e "${BLUE}📡 检查中心 API 服务器...${NC}"
-if curl -s http://localhost:3002/health > /dev/null 2>&1; then
+if curl -s http://localhost:80/health > /dev/null 2>&1; then
     echo -e "${GREEN}   ✅ API 服务器运行正常${NC}"
 else
     echo -e "${YELLOW}   ⚠️  API 服务器未运行${NC}"

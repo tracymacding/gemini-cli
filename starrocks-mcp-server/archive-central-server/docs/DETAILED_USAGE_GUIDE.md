@@ -26,7 +26,7 @@ cd /home/disk5/dingkai/github/gemini-cli/mcp-example
 
 ```bash
 cd /home/disk5/dingkai/github/gemini-cli/mcp-example
-export API_PORT=3002
+export API_PORT=80
 export API_KEY=demo-key
 node index-expert-api.js
 ```
@@ -35,10 +35,10 @@ node index-expert-api.js
 
 ```bash
 # 应该返回 {"status": "healthy", ...}
-curl http://localhost:3002/health
+curl http://localhost:80/health
 
 # 应该返回 3 个工具
-curl http://localhost:3002/api/tools -H "X-API-Key: demo-key" | jq '.tools | length'
+curl http://localhost:80/api/tools -H "X-API-Key: demo-key" | jq '.tools | length'
 ```
 
 ---
@@ -83,7 +83,7 @@ SR_PASSWORD=              # 如果有密码请填写
 SR_PORT=9030
 
 # 中心 API 配置（必填）
-CENTRAL_API=http://localhost:3002
+CENTRAL_API=http://localhost:80
 CENTRAL_API_TOKEN=demo-key
 ```
 
@@ -110,7 +110,7 @@ nano ~/.gemini/settings.json
         "SR_USER": "root",
         "SR_PASSWORD": "",
         "SR_PORT": "9030",
-        "CENTRAL_API": "http://localhost:3002",
+        "CENTRAL_API": "http://localhost:80",
         "CENTRAL_API_TOKEN": "demo-key"
       }
     }
@@ -138,7 +138,7 @@ export SR_HOST=localhost
 export SR_USER=root
 export SR_PASSWORD=""
 export SR_PORT=9030
-export CENTRAL_API=http://localhost:3002
+export CENTRAL_API=http://localhost:80
 export CENTRAL_API_TOKEN=demo-key
 
 # 运行测试（会输出调试信息）
@@ -270,7 +270,7 @@ Gemini AI 会理解你的意图，自动调用相应的工具。
 1. **检查 API 服务器是否运行**：
 
    ```bash
-   curl http://localhost:3002/health
+   curl http://localhost:80/health
    ```
 
    如果失败，重启 API 服务器。
@@ -341,7 +341,7 @@ Gemini AI 会理解你的意图，自动调用相应的工具。
 3. **重启 API 服务器**：
    ```bash
    pkill -f index-expert-api.js
-   export API_KEY=demo-key && export API_PORT=3002
+   export API_KEY=demo-key && export API_PORT=80
    node index-expert-api.js
    ```
 
@@ -387,9 +387,9 @@ echo
 
 # 1. 检查 API 服务器
 echo "1️⃣  检查中心 API 服务器..."
-if curl -s http://localhost:3002/health > /dev/null; then
+if curl -s http://localhost:80/health > /dev/null; then
     echo "   ✅ API 服务器运行正常"
-    TOOLS_COUNT=$(curl -s http://localhost:3002/api/tools -H "X-API-Key: demo-key" | jq -r '.tools | length' 2>/dev/null || echo "0")
+    TOOLS_COUNT=$(curl -s http://localhost:80/api/tools -H "X-API-Key: demo-key" | jq -r '.tools | length' 2>/dev/null || echo "0")
     echo "   ✅ 返回工具数量: $TOOLS_COUNT"
 else
     echo "   ❌ API 服务器未运行或无法访问"

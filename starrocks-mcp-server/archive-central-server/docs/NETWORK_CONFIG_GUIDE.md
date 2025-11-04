@@ -27,12 +27,12 @@
 ```bash
 # 允许外部访问（生产环境）
 API_HOST=0.0.0.0
-API_PORT=3002
+API_PORT=80
 API_KEY=your-secure-api-key-here  # ⚠️ 必须设置强密码！
 
 # 仅本机访问（开发环境）
 # API_HOST=127.0.0.1
-# API_PORT=3002
+# API_PORT=80
 # API_KEY=demo-key
 ```
 
@@ -41,12 +41,12 @@ API_KEY=your-secure-api-key-here  # ⚠️ 必须设置强密码！
 ```bash
 # 允许外部访问
 export API_HOST=0.0.0.0
-export API_PORT=3002
+export API_PORT=80
 export API_KEY=your-secure-api-key
 ./start-central-server.sh
 
 # 或直接在命令行
-API_HOST=0.0.0.0 API_PORT=3002 node index-expert-api-complete.js
+API_HOST=0.0.0.0 API_PORT=80 node index-expert-api-complete.js
 ```
 
 ### 3. 安全配置（重要！）
@@ -75,7 +75,7 @@ API_KEY=a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2
 
 ```bash
 # Ubuntu/Debian (ufw)
-sudo ufw allow from 192.168.1.0/24 to any port 3002 proto tcp
+sudo ufw allow from 192.168.1.0/24 to any port 80 proto tcp
 sudo ufw enable
 
 # CentOS/RHEL (firewalld)
@@ -83,18 +83,18 @@ sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address
 sudo firewall-cmd --reload
 
 # 直接使用 iptables
-sudo iptables -A INPUT -p tcp -s 192.168.1.0/24 --dport 3002 -j ACCEPT
-sudo iptables -A INPUT -p tcp --dport 3002 -j DROP
+sudo iptables -A INPUT -p tcp -s 192.168.1.0/24 --dport 80 -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport 80 -j DROP
 ```
 
 **允许所有 IP 访问**（不推荐，除非有其他安全措施）:
 
 ```bash
 # Ubuntu/Debian
-sudo ufw allow 3002/tcp
+sudo ufw allow 80/tcp
 
 # CentOS/RHEL
-sudo firewall-cmd --permanent --add-port=3002/tcp
+sudo firewall-cmd --permanent --add-port=80/tcp
 sudo firewall-cmd --reload
 ```
 
@@ -119,7 +119,7 @@ server {
 
     # 反向代理
     location / {
-        proxy_pass http://127.0.0.1:3002;
+        proxy_pass http://127.0.0.1:80;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -148,7 +148,7 @@ sudo systemctl reload nginx
 ```bash
 # .env
 API_HOST=127.0.0.1  # 只允许 Nginx 访问
-API_PORT=3002
+API_PORT=80
 ```
 
 ### 4. 验证配置
@@ -160,7 +160,7 @@ API_PORT=3002
 ./start-central-server.sh
 
 # 本地测试
-curl -s http://localhost:3002/health -H "X-API-Key: your-api-key" | jq
+curl -s http://localhost:80/health -H "X-API-Key: your-api-key" | jq
 ```
 
 #### 4.2 远程测试
@@ -169,10 +169,10 @@ curl -s http://localhost:3002/health -H "X-API-Key: your-api-key" | jq
 
 ```bash
 # 替换 <server-ip> 为实际服务器 IP
-curl -s http://<server-ip>:3002/health -H "X-API-Key: your-api-key" | jq
+curl -s http://<server-ip>:80/health -H "X-API-Key: your-api-key" | jq
 
 # 示例
-curl -s http://192.168.1.100:3002/health -H "X-API-Key: demo-key" | jq
+curl -s http://192.168.1.100:80/health -H "X-API-Key: demo-key" | jq
 ```
 
 **期望输出**:
@@ -201,7 +201,7 @@ curl -s http://192.168.1.100:3002/health -H "X-API-Key: demo-key" | jq
 ```bash
 # .env
 API_HOST=127.0.0.1  # 仅本机
-API_PORT=3002
+API_PORT=80
 API_KEY=demo-key
 ```
 
@@ -210,11 +210,11 @@ API_KEY=demo-key
 ```bash
 # .env
 API_HOST=0.0.0.0    # 允许内网访问
-API_PORT=3002
+API_PORT=80
 API_KEY=<生成的强密钥>
 
 # 防火墙：仅允许内网
-sudo ufw allow from 192.168.0.0/16 to any port 3002
+sudo ufw allow from 192.168.0.0/16 to any port 80
 ```
 
 #### 场景 C: 公网部署（高安全）
@@ -222,7 +222,7 @@ sudo ufw allow from 192.168.0.0/16 to any port 3002
 ```bash
 # .env (服务器仅监听本地)
 API_HOST=127.0.0.1
-API_PORT=3002
+API_PORT=80
 API_KEY=<生成的强密钥>
 
 # Nginx 反向代理 + HTTPS + IP 白名单
@@ -234,11 +234,11 @@ API_KEY=<生成的强密钥>
 ```bash
 # .env
 API_HOST=0.0.0.0    # 监听所有接口
-API_PORT=3002
+API_PORT=80
 API_KEY=<生成的强密钥>
 
 # 云服务商安全组配置：
-# 1. 入站规则：TCP 3002，仅允许特定 IP/IP 段
+# 1. 入站规则：TCP 80，仅允许特定 IP/IP 段
 # 2. 出站规则：允许访问 StarRocks (9030) 和 Prometheus (9090)
 ```
 
@@ -250,11 +250,11 @@ API_KEY=<生成的强密钥>
 
 ```bash
 # 本地开发
-CENTRAL_API_URL=http://localhost:3002
+CENTRAL_API_URL=http://localhost:80
 CENTRAL_API_KEY=demo-key
 
 # 远程服务器
-CENTRAL_API_URL=http://192.168.1.100:3002
+CENTRAL_API_URL=http://192.168.1.100:80
 CENTRAL_API_KEY=your-secure-api-key
 
 # 通过域名（HTTPS）
@@ -268,16 +268,16 @@ CENTRAL_API_KEY=your-secure-api-key
 
 ```bash
 # 1. 检查服务器监听地址
-netstat -tlnp | grep 3002
-# 应该看到: 0.0.0.0:3002 或 :::3002
+netstat -tlnp | grep 80
+# 应该看到: 0.0.0.0:80 或 :::80
 
 # 2. 检查防火墙
 sudo ufw status
-sudo iptables -L -n | grep 3002
+sudo iptables -L -n | grep 80
 
 # 3. 测试网络连通性
 ping <server-ip>
-telnet <server-ip> 3002
+telnet <server-ip> 80
 
 # 4. 检查服务器日志
 journalctl -u starrocks-api -f
@@ -333,10 +333,10 @@ echo "🔑 生成的 API Key: $API_KEY"
 
 # 2. 配置网络
 echo "API_HOST=0.0.0.0" >> .env
-echo "API_PORT=3002" >> .env
+echo "API_PORT=80" >> .env
 
 # 3. 配置防火墙（替换为你的客户端 IP 段）
-sudo ufw allow from 192.168.1.0/24 to any port 3002 proto tcp
+sudo ufw allow from 192.168.1.0/24 to any port 80 proto tcp
 sudo ufw enable
 
 # 4. 启动服务
@@ -348,7 +348,7 @@ sudo ufw enable
 ```bash
 mkdir -p ~/.starrocks-mcp
 cat > ~/.starrocks-mcp/.env <<EOF
-CENTRAL_API_URL=http://<server-ip>:3002
+CENTRAL_API_URL=http://<server-ip>:80
 CENTRAL_API_KEY=$API_KEY
 EOF
 ```
@@ -357,7 +357,7 @@ EOF
 
 ## 总结
 
-修改后的服务器默认绑定到 `0.0.0.0:3002`，允许外部访问。你需要：
+修改后的服务器默认绑定到 `0.0.0.0:80`，允许外部访问。你需要：
 
 1. ✅ 设置强 API Key
 2. ✅ 配置防火墙规则

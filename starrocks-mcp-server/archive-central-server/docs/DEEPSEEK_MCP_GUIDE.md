@@ -56,7 +56,7 @@ npm run start:api &
 
 验证：
 ```bash
-curl http://localhost:3002/health
+curl http://localhost:80/health
 ```
 
 ### Step 3: 启动 Gemini CLI (DeepSeek + MCP)
@@ -163,7 +163,7 @@ bash start-gemini-cli.sh
 
 1. 检查 API 服务器：
    ```bash
-   curl http://localhost:3002/health
+   curl http://localhost:80/health
    ```
 
 2. 运行诊断脚本：
