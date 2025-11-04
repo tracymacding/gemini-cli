@@ -6,6 +6,13 @@
 
 **完成时间**: 约 15-20 分钟
 
+**使用的技术栈**:
+
+- **Gemini CLI**: Google 官方命令行工具
+- **DeepSeek**: 高性价比的 LLM 服务（代替 Google Gemini）
+- **MCP (Model Context Protocol)**: 工具协议，连接 StarRocks Expert
+- **StarRocks Expert**: 中心服务器，提供 34 个诊断工具
+
 ---
 
 ## 📖 目录
@@ -28,6 +35,7 @@
 
 - **操作系统**: Linux (推荐 Ubuntu 20.04+) 或 macOS
 - **Node.js**: 版本 >= 18.0.0
+- **DeepSeek API Key**: 从 [DeepSeek Platform](https://platform.deepseek.com/) 获取
 - **StarRocks Expert 中心服务器**: 已部署并运行（联系管理员获取服务器地址和 API Key）
 - **StarRocks 数据库**: 正在运行且可访问（本地或远程）
 - **网络**: 能够访问中心服务器和 StarRocks 数据库
@@ -62,10 +70,15 @@ mysql -h localhost -P 9030 -u root -e "SELECT 1"
 
 ### 准备信息
 
-在开始之前，请向管理员索取以下信息：
+在开始之前，请准备以下信息：
 
-1. **中心服务器地址**: 例如 `http://192.168.1.100:3002`
-2. **API Key**: 用于认证，例如 `5e4e3dfd350d6bd685472327fcf00036fcb4e0ea6129e9d5f4bf17de5a6692d7`
+1. **DeepSeek API Key**: 从 [https://platform.deepseek.com/](https://platform.deepseek.com/) 获取
+   - 示例: `sk-76b76db43c374097afe868e928f993ac`
+
+2. **中心服务器信息**（向管理员索取）:
+   - 服务器地址: 例如 `http://192.168.1.100:3002`
+   - API Key: 例如 `5e4e3dfd350d6bd685472327fcf00036fcb4e0ea6129e9d5f4bf17de5a6692d7`
+
 3. **StarRocks 数据库连接信息**:
    - 主机地址 (SR_HOST)
    - 端口 (SR_PORT, 默认 9030)
@@ -100,36 +113,79 @@ gemini --version
 # 应该显示版本号，例如: 0.8.0
 ```
 
-### 步骤 1.3: 配置 API Key
+### 步骤 1.3: 配置 DeepSeek API Key
 
-Gemini CLI 需要 API Key 才能工作。你有两个选择：
+**本项目使用 DeepSeek 作为 LLM 提供商**，相比 Google Gemini 更加灵活且成本更低。
 
-**选项 A: 使用 Google 登录（推荐，免费）**
+#### 1.3.1 获取 DeepSeek API Key
 
-1. 运行 `gemini` 命令
-2. 选择 "Login with Google"
-3. 在浏览器中完成登录
+1. 访问 [DeepSeek Platform](https://platform.deepseek.com/)
+2. 注册/登录账号
+3. 进入 API Keys 页面
+4. 创建新的 API Key 并复制
 
-**选项 B: 使用 Gemini API Key**
+#### 1.3.2 配置 API Key
+
+**方式 A: 使用项目 .env 文件（推荐）**
 
 ```bash
-# 1. 访问 https://aistudio.google.com/apikey 获取 API Key
-# 2. 设置环境变量
-export GEMINI_API_KEY="your-api-key-here"
+cd /home/disk5/dingkai/github/gemini-cli
 
-# 3. 添加到 shell 配置文件（永久生效）
-echo 'export GEMINI_API_KEY="your-api-key-here"' >> ~/.bashrc
+# 创建 .env 文件
+cat > .env <<'EOF'
+# DeepSeek API Key
+# 获取地址: https://platform.deepseek.com/
+DEEPSEEK_API_KEY=sk-your-deepseek-api-key-here
+EOF
+```
+
+**方式 B: 设置环境变量**
+
+```bash
+# 临时设置（当前终端有效）
+export DEEPSEEK_API_KEY="sk-your-deepseek-api-key-here"
+
+# 永久设置（添加到 shell 配置）
+echo 'export DEEPSEEK_API_KEY="sk-your-deepseek-api-key-here"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-### 步骤 1.4: 测试 Gemini CLI
+### 步骤 1.4: 测试 DeepSeek 连接
 
 ```bash
-gemini -p "Hello, Gemini!"
-# 应该看到 Gemini 的响应
+# 方式 1: 使用启动脚本（推荐，已配置好 DeepSeek）
+cd /home/disk5/dingkai/github/gemini-cli
+./start-gemini-cli.sh
+
+# 方式 2: 直接使用 gemini 命令
+gemini --provider deepseek -m deepseek-chat -p "你好"
 ```
 
-✅ 如果看到响应，说明 Gemini CLI 安装成功！
+**预期输出**:
+
+```
+🤖 启动 Gemini CLI (DeepSeek + MCP)
+====================================
+
+✅ 已加载 .env 配置
+✅ DeepSeek API Key: sk-76b76...
+📡 检查中心 API 服务器...
+   ✅ API 服务器运行正常
+🔧 检查 MCP 配置...
+   ✅ MCP 服务器已连接
+
+🚀 启动 Gemini CLI...
+
+💡 使用的功能:
+   • DeepSeek 模型 (deepseek-chat)
+   • MCP 工具 (StarRocks 诊断)
+
+> 你好
+
+[DeepSeek 的响应...]
+```
+
+✅ 如果看到响应，说明 Gemini CLI + DeepSeek 配置成功！
 
 ---
 
@@ -225,9 +281,17 @@ sudo apt install jq  # Ubuntu/Debian
 
 ### 步骤 3.1: 启动 Gemini CLI
 
+**推荐使用启动脚本**（已配置好 DeepSeek + MCP）:
+
 ```bash
 cd /home/disk5/dingkai/github/gemini-cli
-gemini
+./start-gemini-cli.sh
+```
+
+或者手动启动：
+
+```bash
+gemini --provider deepseek -m deepseek-chat
 ```
 
 ### 步骤 3.2: 检查 MCP 服务器连接
@@ -520,6 +584,30 @@ npm install -g @google/gemini-cli@latest
    - `CENTRAL_API` 指向中心服务器地址
    - `CENTRAL_API_TOKEN` 使用管理员提供的统一 API Key
 3. 确保网络可达（能 ping 通服务器并访问 3002 端口）
+
+### Q7: 为什么使用 DeepSeek 而不是 Google Gemini？
+
+**DeepSeek 的优势**:
+
+- ✅ **更低成本**: 比 Google Gemini 便宜约 90%
+- ✅ **更灵活**: 支持自定义配置和本地部署
+- ✅ **性能优秀**: DeepSeek-V3 在多项基准测试中表现出色
+- ✅ **中文友好**: 对中文支持更好，适合国内用户
+
+**费用对比** (截至 2025-01):
+
+- DeepSeek: ¥1/百万 tokens (输入), ¥2/百万 tokens (输出)
+- Google Gemini: $0.075/百万 tokens (约 ¥0.54)，但有配额限制
+
+### Q8: DeepSeek API Key 如何充值？
+
+1. 登录 [DeepSeek Platform](https://platform.deepseek.com/)
+2. 进入"账户"页面
+3. 选择"充值"
+4. 支持支付宝、微信支付
+5. 最低充值 ¥10，推荐先充值 ¥50 测试
+
+**费用估算**: 日常诊断使用，¥50 大约可以用 1-2 个月。
 
 ---
 
