@@ -34,6 +34,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import mysql from 'mysql2/promise';
+import fs from 'node:fs';
 
 class ThinMCPServer {
   constructor() {
@@ -109,24 +110,24 @@ class ThinMCPServer {
    */
   async getQueriesFromAPI(toolName, args = {}) {
     try {
-      // 构建 URL，将 args 作为 query parameters
-      const url = new URL(`${this.centralAPI}/api/queries/${toolName}`);
+      // 使用 POST 请求，将 args 放在请求体中避免 URL 过长
+      const url = `${this.centralAPI}/api/queries/${toolName}`;
 
-      // 将 args 添加到 query string
-      Object.keys(args).forEach((key) => {
-        if (args[key] !== undefined && args[key] !== null) {
-          url.searchParams.append(key, args[key]);
-        }
-      });
-
-      const headers = {};
+      const headers = {
+        'Content-Type': 'application/json',
+      };
       if (this.apiToken) {
         headers['X-API-Key'] = this.apiToken;
       }
 
-      console.error(`   Fetching queries from: ${url.toString()}`);
+      console.error(`   Fetching queries from: ${url}`);
+      console.error(`   Args size: ${JSON.stringify(args).length} characters`);
 
-      const response = await fetch(url.toString(), { headers });
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({ args }),
+      });
 
       if (!response.ok) {
         throw new Error(
@@ -171,6 +172,67 @@ class ThinMCPServer {
   }
 
   /**
+   * 处理文件路径参数，读取文件内容
+   */
+  async processFileArgs(args) {
+    const processedArgs = { ...args };
+
+    // 处理 file_path 参数
+    if (args.file_path) {
+      try {
+        console.error(`   Reading file: ${args.file_path}`);
+        const content = fs.readFileSync(args.file_path, 'utf-8');
+        const fileSizeKB = content.length / 1024;
+        console.error(`   File content loaded: ${fileSizeKB.toFixed(2)} KB`);
+
+        // 对于大文件（超过 50KB），不通过 JSON-RPC 传输内容，而是在分析阶段处理
+        if (fileSizeKB > 50) {
+          console.error(
+            `   Large file detected (${fileSizeKB.toFixed(2)} KB > 50 KB), will handle in analysis phase`,
+          );
+          // 保留路径信息，不传输内容
+          processedArgs.large_file_path = args.file_path;
+        } else {
+          processedArgs.profile = content; // 将文件内容设置为 profile 参数
+        }
+      } catch (error) {
+        console.error(
+          `   Failed to read file ${args.file_path}: ${error.message}`,
+        );
+        throw new Error(
+          `Failed to read file ${args.file_path}: ${error.message}`,
+        );
+      }
+    }
+
+    // 处理 table_schema_path 参数
+    if (args.table_schema_path) {
+      try {
+        console.error(
+          `   Reading table schema file: ${args.table_schema_path}`,
+        );
+        const schemaContent = fs.readFileSync(args.table_schema_path, 'utf-8');
+        // 如果 table_schemas 是数组，替换第一个，否则创建数组
+        if (Array.isArray(processedArgs.table_schemas)) {
+          processedArgs.table_schemas[0] = schemaContent;
+        } else {
+          processedArgs.table_schemas = [schemaContent];
+        }
+        console.error(
+          `   Table schema loaded: ${(schemaContent.length / 1024).toFixed(2)} KB`,
+        );
+      } catch (error) {
+        console.error(
+          `   Failed to read table schema file ${args.table_schema_path}: ${error.message}`,
+        );
+        // 表结构文件是可选的，读取失败不应该中断流程
+      }
+    }
+
+    return processedArgs;
+  }
+
+  /**
    * 发送结果给中心 API 进行分析
    */
   async analyzeResultsWithAPI(toolName, results, args = {}) {
@@ -183,10 +245,34 @@ class ThinMCPServer {
         headers['X-API-Key'] = this.apiToken;
       }
 
+      // 处理大文件：在这里读取内容而不是通过 JSON-RPC 传输
+      const processedArgs = { ...args };
+      if (args.large_file_path) {
+        console.error(
+          `   Loading large file for analysis: ${args.large_file_path}`,
+        );
+        try {
+          const content = fs.readFileSync(args.large_file_path, 'utf-8');
+          processedArgs.profile = content;
+          processedArgs.file_path = args.large_file_path; // 保持原始路径信息
+          delete processedArgs.large_file_path; // 清理临时字段
+          console.error(
+            `   Large file loaded: ${(content.length / 1024).toFixed(2)} KB`,
+          );
+        } catch (error) {
+          console.error(
+            `   Failed to read large file ${args.large_file_path}: ${error.message}`,
+          );
+          throw new Error(
+            `Failed to read large file ${args.large_file_path}: ${error.message}`,
+          );
+        }
+      }
+
       const response = await fetch(url, {
         method: 'POST',
         headers: headers,
-        body: JSON.stringify({ results, args }),
+        body: JSON.stringify({ results, args: processedArgs }),
       });
 
       if (!response.ok) {
@@ -205,6 +291,16 @@ class ThinMCPServer {
    * 格式化分析报告
    */
   formatAnalysisReport(analysis) {
+    // 如果分析对象为空或无法识别结构，返回错误信息
+    if (!analysis || typeof analysis !== 'object') {
+      return '❌ 分析结果格式错误或为空';
+    }
+
+    // 处理 HTML 报告响应（generate_html_report 工具）- 需要在其他检查之前处理
+    if (analysis.html_content || analysis.output_path) {
+      return `📊 StarRocks HTML 性能分析报告生成完成!\n\n${analysis.message || 'HTML 报告生成成功'}\n\n📋 详细分析请查看 HTML 文件: ${analysis.output_path || '/tmp/profile_analysis_report.html'}`;
+    }
+
     const {
       expert,
       storage_health,
@@ -320,15 +416,18 @@ class ThinMCPServer {
       formattedReport += `🔍 发现问题: ${diagnosis_results.total_issues || diagnosis_results.total_jobs || 0}个\n\n`;
     }
 
-    // 关键问题
+    // 关键问题 - 加强防御性检查
     if (
       diagnosis_results &&
       diagnosis_results.criticals &&
+      Array.isArray(diagnosis_results.criticals) &&
       diagnosis_results.criticals.length > 0
     ) {
       formattedReport += '🔴 严重问题:\n';
       diagnosis_results.criticals.slice(0, 3).forEach((issue, index) => {
-        formattedReport += `  ${index + 1}. ${issue.message}\n`;
+        if (issue && issue.message) {
+          formattedReport += `  ${index + 1}. ${issue.message}\n`;
+        }
       });
       formattedReport += '\n';
     }
@@ -406,9 +505,14 @@ class ThinMCPServer {
         console.error(`\n🔧 Executing tool: ${toolName}`);
         console.error(`   Arguments:`, JSON.stringify(args).substring(0, 200));
 
-        // 1. 从 API 获取需要执行的 SQL（传递 args 参数）
+        // 0. 处理文件路径参数（如果有的话）
+        console.error('   Step 0: Processing file arguments...');
+        const processedArgs = await this.processFileArgs(args);
+        console.error('   File processing completed');
+
+        // 1. 从 API 获取需要执行的 SQL（传递处理后的 args 参数）
         console.error('   Step 1: Fetching SQL queries from Central API...');
-        const queryDef = await this.getQueriesFromAPI(toolName, args);
+        const queryDef = await this.getQueriesFromAPI(toolName, processedArgs);
         console.error(`   Got ${queryDef.queries.length} queries to execute`);
 
         let results = {};
@@ -431,12 +535,22 @@ class ThinMCPServer {
         const analysis = await this.analyzeResultsWithAPI(
           toolName,
           results,
-          args,
+          processedArgs,
         );
         console.error('   Analysis completed\n');
 
         // 4. 格式化报告
         const report = this.formatAnalysisReport(analysis);
+
+        // 对于 HTML 报告，移除大文件内容避免传输阻塞
+        const analysisForJson = { ...analysis };
+        if (analysis.html_content && analysis.output_path) {
+          // 移除大的 HTML 内容，只保留关键信息
+          analysisForJson.html_content = `[HTML Content Removed - ${Math.round(analysis.html_content.length / 1024)}KB]`;
+          console.error(
+            `   Removed large HTML content (${Math.round(analysis.html_content.length / 1024)}KB) from JSON response`,
+          );
+        }
 
         return {
           content: [
@@ -446,7 +560,7 @@ class ThinMCPServer {
             },
             {
               type: 'text',
-              text: JSON.stringify(analysis, null, 2),
+              text: JSON.stringify(analysisForJson, null, 2),
             },
           ],
         };
