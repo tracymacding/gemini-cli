@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/* eslint-disable no-undef */
-
 import { StarRocksCacheExpert } from './cache-expert.js';
 
 class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
@@ -29,7 +27,13 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
         return this.getMetadataCacheQueries(args);
 
       default:
-        return [{ id: 'default', sql: "SELECT 'Tool not fully implemented' as message", required: true }];
+        return [
+          {
+            id: 'default',
+            sql: "SELECT 'Tool not fully implemented' as message",
+            required: true,
+          },
+        ];
     }
   }
 
@@ -41,24 +45,24 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
       {
         id: 'run_mode',
         type: 'sql',
-        query: "ADMIN SHOW FRONTEND CONFIG LIKE 'run_mode';",
+        sql: "ADMIN SHOW FRONTEND CONFIG LIKE 'run_mode';",
         description: '检测集群架构类型',
-        required: true
+        required: true,
       },
       {
         id: 'compute_nodes',
         type: 'sql',
-        query: 'SHOW COMPUTE NODES;',
+        sql: 'SHOW COMPUTE NODES;',
         description: 'Compute Nodes 信息',
-        required: false
+        required: false,
       },
       {
         id: 'cache_metrics',
         type: 'sql',
-        query: 'SELECT * FROM information_schema.be_cache_metrics;',
+        sql: 'SELECT * FROM information_schema.be_cache_metrics;',
         description: '缓存性能指标',
-        required: false
-      }
+        required: false,
+      },
     ];
   }
 
@@ -79,7 +83,7 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
         description: '整体缓存命中率时序数据',
         start: timeRange,
         step: step,
-        required: true
+        required: true,
       },
       {
         id: 'node_hit_ratio',
@@ -88,7 +92,7 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
         description: '各节点缓存命中率',
         start: timeRange,
         step: step,
-        required: true
+        required: true,
       },
       {
         id: 'node_miss_count',
@@ -97,15 +101,15 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
         description: '各节点 miss 速率',
         start: timeRange,
         step: step,
-        required: true
+        required: true,
       },
       {
         id: 'disk_size',
         type: 'prometheus_instant',
         query: 'fslib_star_cache_disk_size',
         description: '缓存磁盘占用',
-        required: false
-      }
+        required: false,
+      },
     ];
   }
 
@@ -124,22 +128,22 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
         description: 'Metadata Cache 使用率',
         start: timeRange,
         step: step,
-        required: true
+        required: true,
       },
       {
         id: 'capacity',
         type: 'prometheus_instant',
         query: 'lake_metacache_capacity',
         description: 'Metadata Cache 容量',
-        required: true
+        required: true,
       },
       {
         id: 'used',
         type: 'prometheus_instant',
         query: 'lake_metacache_usage',
         description: 'Metadata Cache 使用量',
-        required: true
-      }
+        required: true,
+      },
     ];
   }
 
@@ -182,7 +186,7 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
           version: this.version,
           timestamp: new Date().toISOString(),
           tool: toolName,
-          results: results
+          results: results,
         };
     }
   }
@@ -196,7 +200,8 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
     // 检测架构类型
     let architectureType = 'shared_nothing';
     if (run_mode && run_mode.length > 0) {
-      architectureType = run_mode[0].Value || run_mode[0].value || 'shared_nothing';
+      architectureType =
+        run_mode[0].Value || run_mode[0].value || 'shared_nothing';
     }
 
     if (architectureType !== 'shared_data') {
@@ -205,7 +210,7 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
         message: `当前集群是${architectureType === 'shared_nothing' ? '存算一体' : '未知'}架构，Data Cache 分析仅适用于存算分离架构`,
         expert: this.name,
         timestamp: new Date().toISOString(),
-        architecture_type: architectureType
+        architecture_type: architectureType,
       };
     }
 
@@ -213,11 +218,13 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
     const diagnosis = this.performCacheDiagnosis({
       architecture_type: architectureType,
       compute_nodes: compute_nodes || [],
-      cache_metrics: cache_metrics || []
+      cache_metrics: cache_metrics || [],
     });
 
     const healthScore = this.calculateCacheHealthScore(diagnosis);
-    const recommendations = this.generateCacheRecommendations(diagnosis, { cache_metrics });
+    const recommendations = this.generateCacheRecommendations(diagnosis, {
+      cache_metrics,
+    });
 
     return {
       expert: this.name,
@@ -227,7 +234,7 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
       cache_health: healthScore,
       diagnosis_results: diagnosis,
       professional_recommendations: recommendations,
-      status: 'completed'
+      status: 'completed',
     };
   }
 
@@ -235,7 +242,8 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
    * 分析缓存抖动（基于 Prometheus 查询结果）
    */
   analyzeCacheJitter(results, args) {
-    const { overall_hit_ratio, node_hit_ratio, node_miss_count, disk_size } = results;
+    const { overall_hit_ratio, node_hit_ratio, node_miss_count, disk_size } =
+      results;
 
     // 检查是否有错误
     if (overall_hit_ratio && overall_hit_ratio.error) {
@@ -244,7 +252,8 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
         message: `无法获取 Prometheus 数据: ${overall_hit_ratio.error}`,
         expert: this.name,
         timestamp: new Date().toISOString(),
-        fallback_recommendation: '请检查 Prometheus 是否运行，并确认指标采集正常'
+        fallback_recommendation:
+          '请检查 Prometheus 是否运行，并确认指标采集正常',
       };
     }
 
@@ -253,7 +262,7 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
       overall_hit_ratio,
       node_hit_ratio,
       node_miss_count,
-      disk_size
+      disk_size,
     );
 
     const recommendations = this.generateTimeSeriesRecommendations(analysis);
@@ -267,7 +276,7 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
       overall_hit_ratio: analysis.overall,
       node_hit_ratios: analysis.nodes,
       jitter_detection: analysis.jitter,
-      recommendations: recommendations
+      recommendations: recommendations,
     };
   }
 
@@ -284,12 +293,17 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
         message: `无法获取 Metadata Cache 数据: ${usage_percent.error}`,
         expert: this.name,
         timestamp: new Date().toISOString(),
-        fallback_recommendation: '请检查 Prometheus 是否运行，并确认 lake_metacache_* 指标存在'
+        fallback_recommendation:
+          '请检查 Prometheus 是否运行，并确认 lake_metacache_* 指标存在',
       };
     }
 
     // 使用父类方法分析元数据缓存
-    const analysis = this.analyzeMetadataCacheData(usage_percent, capacity, used);
+    const analysis = this.analyzeMetadataCacheData(
+      usage_percent,
+      capacity,
+      used,
+    );
 
     return {
       status: 'success',
@@ -297,7 +311,7 @@ class StarRocksCacheExpertSolutionC extends StarRocksCacheExpert {
       version: this.version,
       timestamp: new Date().toISOString(),
       time_range: args.time_range || '1h',
-      metadata_cache_analysis: analysis
+      metadata_cache_analysis: analysis,
     };
   }
 }

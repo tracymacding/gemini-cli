@@ -50,6 +50,13 @@ class ThinMCPServer {
       port: parseInt(process.env.SR_PORT) || 9030,
     };
 
+    // Prometheus 配置
+    this.prometheusConfig = {
+      protocol: process.env.PROMETHEUS_PROTOCOL || 'http',
+      host: process.env.PROMETHEUS_HOST || 'localhost',
+      port: parseInt(process.env.PROMETHEUS_PORT) || 9090,
+    };
+
     // 工具缓存（避免重复请求 API）
     this.toolsCache = null;
     this.cacheTime = null;
@@ -58,6 +65,9 @@ class ThinMCPServer {
     console.error('🤖 Thin MCP Server initialized');
     console.error(`   Central API: ${this.centralAPI}`);
     console.error(`   Database: ${this.dbConfig.host}:${this.dbConfig.port}`);
+    console.error(
+      `   Prometheus: ${this.prometheusConfig.protocol}://${this.prometheusConfig.host}:${this.prometheusConfig.port}`,
+    );
   }
 
   /**
@@ -144,31 +154,497 @@ class ThinMCPServer {
   }
 
   /**
-   * 执行 SQL 查询
+   * 执行查询（SQL + Prometheus）
    */
   async executeQueries(queries) {
-    const connection = await mysql.createConnection(this.dbConfig);
     const results = {};
+    let connection = null;
+
+    // 分离 SQL 查询和 Prometheus 查询
+    const sqlQueries = queries.filter((q) => q.type === 'sql' || !q.type);
+    const prometheusQueries = queries.filter(
+      (q) => q.type === 'prometheus_range' || q.type === 'prometheus_instant',
+    );
+
+    // 执行 SQL 查询
+    if (sqlQueries.length > 0) {
+      try {
+        connection = await mysql.createConnection(this.dbConfig);
+        // 禁用当前 session 的 profile 记录，避免系统查询挤掉用户查询的 profile
+        await connection.query('SET enable_profile = false');
+        console.error('   Disabled profile recording for this session');
+        for (const query of sqlQueries) {
+          try {
+            console.error(`Executing SQL query: ${query.id}`);
+            const [rows] = await connection.query(query.sql);
+            results[query.id] = rows;
+          } catch (error) {
+            console.error(`SQL Query ${query.id} failed:`, error.message);
+            results[query.id] = {
+              error: error.message,
+              sql: query.sql ? query.sql.substring(0, 100) + '...' : 'N/A',
+            };
+          }
+        }
+      } finally {
+        if (connection) await connection.end();
+      }
+    }
+
+    // 执行 Prometheus 查询
+    for (const query of prometheusQueries) {
+      try {
+        console.error(
+          `Executing Prometheus query: ${query.id} (${query.type})`,
+        );
+        if (query.type === 'prometheus_range') {
+          results[query.id] = await this.queryPrometheusRange(query);
+        } else {
+          results[query.id] = await this.queryPrometheusInstant(query);
+        }
+      } catch (error) {
+        console.error(`Prometheus Query ${query.id} failed:`, error.message);
+        results[query.id] = {
+          error: error.message,
+          query: query.query ? query.query.substring(0, 100) + '...' : 'N/A',
+        };
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * 查询 Prometheus 即时数据
+   */
+  async queryPrometheusInstant(queryDef) {
+    const baseUrl = `${this.prometheusConfig.protocol}://${this.prometheusConfig.host}:${this.prometheusConfig.port}`;
+    const url = `${baseUrl}/api/v1/query`;
+
+    const params = new URLSearchParams({
+      query: queryDef.query,
+    });
+
+    const response = await fetch(`${url}?${params}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Prometheus API error: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    const data = await response.json();
+    if (data.status !== 'success') {
+      throw new Error(
+        `Prometheus query failed: ${data.error || 'unknown error'}`,
+      );
+    }
+
+    return data.data;
+  }
+
+  /**
+   * 查询 Prometheus 范围数据
+   */
+  async queryPrometheusRange(queryDef) {
+    const baseUrl = `${this.prometheusConfig.protocol}://${this.prometheusConfig.host}:${this.prometheusConfig.port}`;
+    const url = `${baseUrl}/api/v1/query_range`;
+
+    // 解析时间范围
+    const now = Math.floor(Date.now() / 1000);
+    let startTime = now - 3600; // 默认 1 小时
+
+    const timeRange = queryDef.start || '1h';
+    const rangeMatch = timeRange.match(/^(\d+)([hmd])$/);
+    if (rangeMatch) {
+      const value = parseInt(rangeMatch[1]);
+      const unit = rangeMatch[2];
+      switch (unit) {
+        case 'h':
+          startTime = now - value * 3600;
+          break;
+        case 'm':
+          startTime = now - value * 60;
+          break;
+        case 'd':
+          startTime = now - value * 86400;
+          break;
+      }
+    }
+
+    const params = new URLSearchParams({
+      query: queryDef.query,
+      start: startTime.toString(),
+      end: now.toString(),
+      step: queryDef.step || '1m',
+    });
+
+    const response = await fetch(`${url}?${params}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Prometheus API error: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    const data = await response.json();
+    if (data.status !== 'success') {
+      throw new Error(
+        `Prometheus query failed: ${data.error || 'unknown error'}`,
+      );
+    }
+
+    return data.data;
+  }
+
+  /**
+   * 获取多个查询的详细 Profile
+   * @param {Array} profileList - SHOW PROFILELIST 返回的结果
+   * @param {Object} options - 过滤选项
+   * @param {string} options.timeRange - 时间范围，如 "1h", "30m", "1d"
+   * @param {number} options.minDurationMs - 最小查询时长（毫秒）
+   */
+  async fetchQueryProfiles(profileList, options = {}) {
+    const profiles = {};
+    const connection = await mysql.createConnection(this.dbConfig);
 
     try {
-      for (const query of queries) {
+      // 禁用当前 session 的 profile 记录，避免 get_query_profile 查询挤掉用户查询的 profile
+      await connection.query('SET enable_profile = false');
+
+      // 1. 先过滤系统查询
+      let filteredQueries = this.filterUserQueries(profileList);
+      console.error(
+        `   Filtered ${profileList.length} queries to ${filteredQueries.length} user queries`,
+      );
+
+      // 2. 按时间范围过滤
+      const timeRange = options.timeRange || '1h';
+      const cutoffTime = this.calculateCutoffTime(timeRange);
+      filteredQueries = filteredQueries.filter((item) => {
+        if (!item.StartTime) return false;
+        const queryTime = new Date(item.StartTime);
+        return queryTime >= cutoffTime;
+      });
+      console.error(
+        `   After time filter (${timeRange}): ${filteredQueries.length} queries`,
+      );
+
+      // 3. 按最小时长过滤
+      const minDurationMs = options.minDurationMs || 100;
+      filteredQueries = filteredQueries.filter((item) => {
+        const durationMs = this.parseDuration(item.Time);
+        return durationMs >= minDurationMs;
+      });
+      console.error(
+        `   After duration filter (>=${minDurationMs}ms): ${filteredQueries.length} queries`,
+      );
+
+      // 获取所有符合条件的查询的 profile
+      for (const item of filteredQueries) {
+        const queryId = item.QueryId;
+        if (!queryId) continue;
+
         try {
-          console.error(`Executing query: ${query.id}`);
-          const [rows] = await connection.query(query.sql);
-          results[query.id] = rows;
+          console.error(`   Fetching profile for query: ${queryId}`);
+          const [rows] = await connection.query(
+            `SELECT get_query_profile('${queryId}') as profile`,
+          );
+          if (rows && rows[0] && rows[0].profile) {
+            profiles[queryId] = {
+              profile: rows[0].profile,
+              startTime: item.StartTime,
+              duration: item.Time,
+              state: item.State,
+              statement: item.Statement || '',
+            };
+          }
         } catch (error) {
-          console.error(`Query ${query.id} failed:`, error.message);
-          results[query.id] = {
-            error: error.message,
-            sql: query.sql.substring(0, 100) + '...',
-          };
+          console.error(
+            `   Failed to fetch profile for ${queryId}: ${error.message}`,
+          );
+          profiles[queryId] = { error: error.message };
         }
       }
     } finally {
       await connection.end();
     }
 
-    return results;
+    return profiles;
+  }
+
+  /**
+   * 根据时间范围计算截止时间
+   * @param {string} timeRange - 时间范围，如 "1h", "30m", "1d"
+   * @returns {Date} 截止时间
+   */
+  calculateCutoffTime(timeRange) {
+    const now = new Date();
+    const match = timeRange.match(/^(\d+)([hmd])$/);
+    if (!match) {
+      // 默认 1 小时
+      return new Date(now.getTime() - 60 * 60 * 1000);
+    }
+
+    const value = parseInt(match[1], 10);
+    const unit = match[2];
+
+    let milliseconds;
+    switch (unit) {
+      case 'm':
+        milliseconds = value * 60 * 1000;
+        break;
+      case 'h':
+        milliseconds = value * 60 * 60 * 1000;
+        break;
+      case 'd':
+        milliseconds = value * 24 * 60 * 60 * 1000;
+        break;
+      default:
+        milliseconds = 60 * 60 * 1000;
+    }
+
+    return new Date(now.getTime() - milliseconds);
+  }
+
+  /**
+   * 解析时长字符串为毫秒
+   * @param {string} duration - 时长字符串，如 "5s489ms", "831ms", "9s139ms"
+   * @returns {number} 毫秒数
+   */
+  parseDuration(duration) {
+    if (!duration) return 0;
+
+    let totalMs = 0;
+
+    // 匹配秒
+    const secMatch = duration.match(/(\d+)s/);
+    if (secMatch) {
+      totalMs += parseInt(secMatch[1], 10) * 1000;
+    }
+
+    // 匹配毫秒
+    const msMatch = duration.match(/(\d+)ms/);
+    if (msMatch) {
+      totalMs += parseInt(msMatch[1], 10);
+    }
+
+    // 匹配分钟
+    const minMatch = duration.match(/(\d+)m(?!s)/);
+    if (minMatch) {
+      totalMs += parseInt(minMatch[1], 10) * 60 * 1000;
+    }
+
+    return totalMs;
+  }
+
+  /**
+   * 从 profile 数据中提取有 cache miss 的表名
+   * 只提取 CompressedBytesReadRemote > 0 或 IOCountRemote > 0 的表
+   */
+  extractTableNamesFromProfiles(queryProfiles) {
+    const tableNames = new Set();
+
+    for (const [, profileData] of Object.entries(queryProfiles)) {
+      if (profileData.error || !profileData.profile) continue;
+
+      // 提取每个表及其对应的 cache 指标
+      const tablesWithCacheMiss = this.extractTablesWithCacheMiss(
+        profileData.profile,
+      );
+      for (const tableName of tablesWithCacheMiss) {
+        tableNames.add(tableName);
+      }
+    }
+
+    return tableNames;
+  }
+
+  /**
+   * 从单个 profile 中提取有 cache miss 的表
+   * 解析 IOStatistics 块中的 CompressedBytesReadRemote 和 IOCountRemote
+   */
+  extractTablesWithCacheMiss(profileText) {
+    const tablesWithCacheMiss = [];
+    const lines = profileText.split('\n');
+    let currentTable = null;
+    let inIOStatistics = false;
+    let currentTableHasCacheMiss = false;
+
+    for (const line of lines) {
+      // 检测 Table: xxx
+      const tableMatch = line.match(/-\s*Table:\s*(\S+)/);
+      if (tableMatch) {
+        // 保存上一个表的结果
+        if (
+          currentTable &&
+          currentTableHasCacheMiss &&
+          !tablesWithCacheMiss.includes(currentTable)
+        ) {
+          tablesWithCacheMiss.push(currentTable);
+        }
+        currentTable = tableMatch[1].trim();
+        inIOStatistics = false;
+        currentTableHasCacheMiss = false;
+        continue;
+      }
+
+      // 检测是否进入 IOStatistics 块
+      if (line.includes('- IOStatistics:')) {
+        inIOStatistics = true;
+        continue;
+      }
+
+      // 在 IOStatistics 块内检查 cache miss
+      if (currentTable && inIOStatistics) {
+        // CompressedBytesReadRemote > 0
+        const remoteBytesMatch = line.match(
+          /CompressedBytesReadRemote:\s*([\d.]+)\s*([KMGTP]?B)/i,
+        );
+        if (remoteBytesMatch) {
+          const value = parseFloat(remoteBytesMatch[1]);
+          if (value > 0) currentTableHasCacheMiss = true;
+        }
+
+        // IOCountRemote > 0
+        const remoteIOMatch = line.match(/IOCountRemote:\s*([\d.,]+)/i);
+        if (remoteIOMatch) {
+          const value = parseInt(remoteIOMatch[1].replace(/,/g, ''), 10);
+          if (value > 0) currentTableHasCacheMiss = true;
+        }
+      }
+    }
+
+    // 保存最后一个表的结果
+    if (
+      currentTable &&
+      currentTableHasCacheMiss &&
+      !tablesWithCacheMiss.includes(currentTable)
+    ) {
+      tablesWithCacheMiss.push(currentTable);
+    }
+
+    return tablesWithCacheMiss;
+  }
+
+  /**
+   * 获取表的 schema 信息，检查 data_cache.enable 属性
+   */
+  async fetchTableSchemas(tableNames) {
+    const schemas = {};
+    const connection = await mysql.createConnection(this.dbConfig);
+
+    try {
+      // 禁用当前 session 的 profile 记录
+      await connection.query('SET enable_profile = false');
+
+      for (const fullTableName of tableNames) {
+        const [dbName, tableName] = fullTableName.split('.');
+        if (!dbName || !tableName) continue;
+
+        try {
+          const [rows] = await connection.query(
+            `SHOW CREATE TABLE ${dbName}.${tableName}`,
+          );
+          if (rows && rows[0]) {
+            const createStatement =
+              rows[0]['Create Table'] || rows[0]['create_statement'] || '';
+            schemas[fullTableName] = {
+              create_statement: createStatement,
+              data_cache_enabled: this.checkDataCacheEnabled(createStatement),
+            };
+          }
+        } catch (error) {
+          console.error(
+            `   Failed to fetch schema for ${fullTableName}: ${error.message}`,
+          );
+          schemas[fullTableName] = { error: error.message };
+        }
+      }
+    } finally {
+      await connection.end();
+    }
+
+    return schemas;
+  }
+
+  /**
+   * 检查建表语句中 data_cache.enable 是否为 true
+   */
+  checkDataCacheEnabled(createStatement) {
+    if (!createStatement) return null;
+
+    // 检查 "datacache.enable" = "false" 或 'datacache.enable' = 'false'
+    const disabledMatch = createStatement.match(
+      /["']datacache\.enable["']\s*=\s*["']false["']/i,
+    );
+    if (disabledMatch) {
+      return false;
+    }
+
+    // 检查 "datacache.enable" = "true" 或存在 datacache 相关配置
+    const enabledMatch = createStatement.match(
+      /["']datacache\.enable["']\s*=\s*["']true["']/i,
+    );
+    if (enabledMatch) {
+      return true;
+    }
+
+    // 默认为开启（如果没有显式设置）
+    return null;
+  }
+
+  /**
+   * 过滤出真正的用户查询，排除系统查询
+   */
+  filterUserQueries(profileList) {
+    const systemPatterns = [
+      /^\s*select\s+last_query_id\s*\(/i,
+      /^\s*select\s+get_query_profile\s*\(/i,
+      /^\s*select\s+@@/i,
+      /^\s*show\s+/i,
+      /^\s*admin\s+show\s+/i,
+      /^\s*desc\s+/i,
+      /^\s*describe\s+/i,
+      /^\s*explain\s+/i,
+      /^\s*set\s+/i,
+      /^\s*use\s+/i,
+      /information_schema/i,
+      /_statistics_/i,
+      /^\s*select\s+version\s*\(\)/i,
+      /^\s*select\s+current_user\s*\(\)/i,
+      /^\s*select\s+database\s*\(\)/i,
+      /^\s*select\s+connection_id\s*\(\)/i,
+    ];
+
+    return profileList.filter((item) => {
+      const sql = (item.Statement || '').trim();
+      if (!sql) return false;
+
+      for (const pattern of systemPatterns) {
+        if (pattern.test(sql)) {
+          return false;
+        }
+      }
+
+      // 处理 SQL 中的换行符，将其替换为空格再检查
+      const sqlNormalized = sql.toLowerCase().replace(/\n/g, ' ');
+      // 排除没有 FROM 子句的纯 SELECT 语句（如 select 1+1, select @@var）
+      if (
+        sqlNormalized.startsWith('select') &&
+        !sqlNormalized.includes(' from ')
+      ) {
+        return false;
+      }
+
+      return true;
+    });
   }
 
   /**
@@ -517,15 +993,64 @@ class ThinMCPServer {
 
         let results = {};
 
+        // 检查是否需要两阶段 profile 获取
+        const metaQuery = queryDef.queries.find(
+          (q) => q.type === 'meta' && q.requires_profile_fetch,
+        );
+        const regularQueries = queryDef.queries.filter(
+          (q) => q.type !== 'meta',
+        );
+
         // 2. 执行 SQL（如果有的话）
-        if (queryDef.queries.length > 0) {
+        if (regularQueries.length > 0) {
           console.error('   Step 2: Executing SQL queries locally...');
-          results = await this.executeQueries(queryDef.queries);
+          results = await this.executeQueries(regularQueries);
           console.error('   SQL execution completed');
         } else {
           console.error(
             '   Step 2: No SQL queries to execute (args-only tool)',
           );
+        }
+
+        // 2.5 如果需要获取详细 profile，执行第二阶段查询
+        if (
+          metaQuery &&
+          results.profile_list &&
+          Array.isArray(results.profile_list)
+        ) {
+          console.error(
+            '   Step 2.5: Fetching detailed profiles for each query...',
+          );
+          const fetchOptions = {
+            timeRange: metaQuery.time_range || '1h',
+            minDurationMs: metaQuery.min_duration_ms || 100,
+          };
+          results.query_profiles = await this.fetchQueryProfiles(
+            results.profile_list,
+            fetchOptions,
+          );
+          console.error(
+            `   Fetched ${Object.keys(results.query_profiles).length} query profiles`,
+          );
+
+          // 2.6 如果需要获取表 schema，从 profile 中提取表名并查询
+          if (metaQuery.requires_table_schema_fetch) {
+            console.error(
+              '   Step 2.6: Fetching table schemas for cache miss analysis...',
+            );
+            const tableNames = this.extractTableNamesFromProfiles(
+              results.query_profiles,
+            );
+            console.error(
+              `   Found ${tableNames.size} unique tables: ${[...tableNames].slice(0, 5).join(', ')}${tableNames.size > 5 ? '...' : ''}`,
+            );
+            if (tableNames.size > 0) {
+              results.table_schemas = await this.fetchTableSchemas(tableNames);
+              console.error(
+                `   Fetched schemas for ${Object.keys(results.table_schemas).length} tables`,
+              );
+            }
+          }
         }
 
         // 3. 发送给 API 分析
@@ -542,9 +1067,21 @@ class ThinMCPServer {
         // 4. 格式化报告
         const report = this.formatAnalysisReport(analysis);
 
-        // 对于 HTML 报告，移除大文件内容避免传输阻塞
+        // 对于 HTML 报告，写入文件并移除大内容避免传输阻塞
         const analysisForJson = { ...analysis };
         if (analysis.html_content && analysis.output_path) {
+          try {
+            fs.writeFileSync(
+              analysis.output_path,
+              analysis.html_content,
+              'utf-8',
+            );
+            console.error(`   HTML report written to: ${analysis.output_path}`);
+          } catch (writeErr) {
+            console.error(
+              `   Failed to write HTML report: ${writeErr.message}`,
+            );
+          }
           // 移除大的 HTML 内容，只保留关键信息
           analysisForJson.html_content = `[HTML Content Removed - ${Math.round(analysis.html_content.length / 1024)}KB]`;
           console.error(
