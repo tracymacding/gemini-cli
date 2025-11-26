@@ -304,6 +304,141 @@ class ThinMCPServer {
   }
 
   /**
+   * 执行 CLI 命令（用于对象存储空间查询等场景）
+   * @param {Array} commands - CLI 命令列表
+   * @returns {Object} 执行结果
+   */
+  async executeCliCommands(commands) {
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+
+    const results = {
+      cli_results: [],
+      cli_summary: {
+        total: commands.length,
+        successful: 0,
+        failed: 0,
+        execution_time_ms: 0
+      }
+    };
+
+    const startTime = Date.now();
+    const maxConcurrency = 10;
+    const commandTimeoutMs = 30000; // 30 秒超时
+
+    // 分批并发执行
+    for (let i = 0; i < commands.length; i += maxConcurrency) {
+      const batch = commands.slice(i, i + maxConcurrency);
+
+      const batchResults = await Promise.all(
+        batch.map(async (cmd) => {
+          try {
+            console.error(`   Executing CLI: ${cmd.command.substring(0, 80)}...`);
+            const cmdStartTime = Date.now();
+
+            const { stdout, stderr } = await execAsync(cmd.command, {
+              timeout: commandTimeoutMs,
+              maxBuffer: 10 * 1024 * 1024 // 10MB
+            });
+
+            const duration = Date.now() - cmdStartTime;
+
+            // 解析输出获取大小
+            const sizeBytes = this.parseStorageCliOutput(cmd.storage_type, stdout);
+
+            return {
+              partition_key: cmd.partition_key,
+              path: cmd.path,
+              storage_type: cmd.storage_type,
+              success: sizeBytes !== null,
+              size_bytes: sizeBytes,
+              execution_time_ms: duration
+            };
+          } catch (error) {
+            console.error(`   CLI failed for ${cmd.partition_key}: ${error.message}`);
+            return {
+              partition_key: cmd.partition_key,
+              path: cmd.path,
+              storage_type: cmd.storage_type,
+              success: false,
+              error: error.message
+            };
+          }
+        })
+      );
+
+      for (const result of batchResults) {
+        results.cli_results.push(result);
+        if (result.success) {
+          results.cli_summary.successful++;
+        } else {
+          results.cli_summary.failed++;
+        }
+      }
+    }
+
+    results.cli_summary.execution_time_ms = Date.now() - startTime;
+    console.error(`   CLI execution completed: ${results.cli_summary.successful} success, ${results.cli_summary.failed} failed`);
+
+    return results;
+  }
+
+  /**
+   * 解析存储 CLI 输出获取大小（字节数）
+   */
+  parseStorageCliOutput(storageType, stdout) {
+    try {
+      switch (storageType) {
+        case 's3':
+        case 's3a':
+        case 's3n': {
+          // AWS S3: "Total Size: 1234567890 Bytes"
+          const match = stdout.match(/Total Size:\s*([\d,]+)\s*Bytes/i);
+          if (match) return parseInt(match[1].replace(/,/g, ''), 10);
+          if (stdout.includes('Total Objects: 0')) return 0;
+          break;
+        }
+        case 'oss': {
+          // OSS: "total object sum size: 1234567890"
+          const match = stdout.match(/total object sum size:\s*([\d]+)/i);
+          if (match) return parseInt(match[1], 10);
+          if (stdout.includes('total object count: 0')) return 0;
+          break;
+        }
+        case 'cos':
+        case 'cosn': {
+          // COS: "(1234567890 Bytes)" or "Total Size: 1.23 GB"
+          const bytesMatch = stdout.match(/\((\d+)\s*Bytes?\)/i);
+          if (bytesMatch) return parseInt(bytesMatch[1], 10);
+          break;
+        }
+        case 'hdfs': {
+          // HDFS: "1234567890  path"
+          const match = stdout.match(/^(\d+)/);
+          if (match) return parseInt(match[1], 10);
+          break;
+        }
+        case 'gs': {
+          // GCS: "1234567890  gs://bucket/path"
+          const match = stdout.match(/^(\d+)/);
+          if (match) return parseInt(match[1], 10);
+          break;
+        }
+        case 'azblob': {
+          // Azure: 直接是数字
+          const num = parseInt(stdout.trim(), 10);
+          if (!isNaN(num)) return num;
+          break;
+        }
+      }
+    } catch (e) {
+      console.error(`   Failed to parse CLI output for ${storageType}: ${e.message}`);
+    }
+    return null;
+  }
+
+  /**
    * 获取多个查询的详细 Profile
    * @param {Array} profileList - SHOW PROFILELIST 返回的结果
    * @param {Object} options - 过滤选项
@@ -1053,15 +1188,47 @@ class ThinMCPServer {
           }
         }
 
-        // 3. 发送给 API 分析
+        // 3. 发送给 API 分析（支持多阶段查询）
         console.error(
           '   Step 3: Sending results to Central API for analysis...',
         );
-        const analysis = await this.analyzeResultsWithAPI(
+        let analysis = await this.analyzeResultsWithAPI(
           toolName,
           results,
           processedArgs,
         );
+
+        // 3.5 处理多阶段查询（如存储放大分析的 schema 检测）
+        let phaseCount = 1;
+        const maxPhases = 5; // 防止无限循环
+        while (analysis.status === 'needs_more_queries' && phaseCount < maxPhases) {
+          phaseCount++;
+          console.error(`   Step 3.${phaseCount}: Multi-phase query detected (${analysis.phase})`);
+          console.error(`   Message: ${analysis.message}`);
+
+          // 检查是否需要执行 CLI 命令
+          if (analysis.requires_cli_execution && analysis.cli_commands) {
+            console.error(`   Executing ${analysis.cli_commands.length} CLI commands...`);
+            const cliResults = await this.executeCliCommands(analysis.cli_commands);
+            results = { ...results, ...cliResults };
+          }
+
+          // 执行下一阶段的 SQL 查询
+          if (analysis.next_queries && analysis.next_queries.length > 0) {
+            console.error(`   Executing ${analysis.next_queries.length} additional queries...`);
+            const additionalResults = await this.executeQueries(analysis.next_queries);
+            results = { ...results, ...additionalResults };
+          }
+
+          // 使用更新后的参数再次调用分析 API
+          const nextArgs = analysis.next_args || processedArgs;
+          console.error(`   Re-analyzing with updated args...`);
+          analysis = await this.analyzeResultsWithAPI(toolName, results, nextArgs);
+        }
+
+        if (phaseCount >= maxPhases) {
+          console.error('   Warning: Max phases reached, analysis may be incomplete');
+        }
         console.error('   Analysis completed\n');
 
         // 4. 格式化报告
