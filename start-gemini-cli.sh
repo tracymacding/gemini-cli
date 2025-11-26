@@ -19,7 +19,8 @@ echo "===================================="
 echo ""
 
 # 切换到项目目录
-cd /home/disk5/dingkai/github/gemini-cli
+# 切换到脚本所在目录
+cd "$(dirname "$0")"
 
 # 加载环境变量
 if [ -f .env ]; then
@@ -39,15 +40,7 @@ fi
 echo -e "${GREEN}✅ DeepSeek API Key: ${DEEPSEEK_API_KEY:0:8}...${NC}"
 echo ""
 
-# 检查 API 服务器
-echo -e "${BLUE}📡 检查中心 API 服务器...${NC}"
-if curl -s http://localhost:80/health > /dev/null 2>&1; then
-    echo -e "${GREEN}   ✅ API 服务器运行正常${NC}"
-else
-    echo -e "${YELLOW}   ⚠️  API 服务器未运行${NC}"
-    echo "   启动命令: cd mcp-example && ./start-api-server.sh"
-    echo ""
-fi
+
 
 # 检查 MCP 配置
 echo -e "${BLUE}🔧 检查 MCP 配置...${NC}"

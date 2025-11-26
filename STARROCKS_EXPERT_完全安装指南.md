@@ -91,19 +91,28 @@ mysql -h localhost -P 9030 -u root -e "SELECT 1"
 
 ### 步骤 1.1: 安装 Gemini CLI
 
-有两种安装方式，选择其中一种：
-
-**方式 A: 使用 npm 全局安装（推荐）**
+请直接克隆本项目代码：
 
 ```bash
-npm install -g @google/gemini-cli
-```
+# 克隆项目
+git clone git@github.com:tracymacding/gemini-cli.git
 
-**方式 B: 使用 npx 运行（无需安装）**
+# 进入项目目录
+cd gemini-cli
 
-```bash
-# 每次使用时运行
-npx @google/gemini-cli
+# 安装依赖
+npm install
+
+# 安装 MCP Server 依赖
+cd starrocks-mcp-server
+npm install
+cd ..
+
+# 构建项目
+npm run build
+
+# 链接到全局 (方便直接使用 gemini 命令)
+npm link
 ```
 
 ### 步骤 1.2: 验证安装
@@ -129,7 +138,7 @@ gemini --version
 **方式 A: 使用项目 .env 文件（推荐）**
 
 ```bash
-cd /home/disk5/dingkai/github/gemini-cli
+cd gemini-cli
 
 # 创建 .env 文件
 cat > .env <<'EOF'
@@ -154,7 +163,7 @@ source ~/.bashrc
 
 ```bash
 # 方式 1: 使用启动脚本（推荐，已配置好 DeepSeek）
-cd /home/disk5/dingkai/github/gemini-cli
+cd gemini-cli
 ./start-gemini-cli.sh
 
 # 方式 2: 直接使用 gemini 命令
@@ -224,7 +233,7 @@ nano ~/.gemini/settings.json
     "starrocks-expert": {
       "command": "node",
       "args": [
-        "/home/disk5/dingkai/github/gemini-cli/starrocks-mcp-server/starrocks-mcp.js"
+        "/path/to/your/gemini-cli/starrocks-mcp-server/starrocks-mcp.js"
       ],
       "env": {
         "SR_HOST": "localhost",
@@ -284,7 +293,7 @@ sudo apt install jq  # Ubuntu/Debian
 **推荐使用启动脚本**（已配置好 DeepSeek + MCP）:
 
 ```bash
-cd /home/disk5/dingkai/github/gemini-cli
+cd gemini-cli
 ./start-gemini-cli.sh
 ```
 
@@ -571,7 +580,16 @@ StarRocks Expert 提供 **34 个**专业诊断工具：
 **更新 Gemini CLI**:
 
 ```bash
-npm install -g @google/gemini-cli@latest
+# 进入项目目录
+cd gemini-cli
+
+# 拉取最新代码
+git pull
+
+# 重新安装依赖并构建
+npm install
+cd starrocks-mcp-server && npm install && cd ..
+npm run build
 ```
 
 **更新 StarRocks Expert 工具**:
@@ -651,7 +669,7 @@ cat ~/.gemini/settings.json | jq .
 #### 5. 检查 MCP Client 文件
 
 ```bash
-ls -la /home/disk5/dingkai/github/gemini-cli/starrocks-mcp-server/starrocks-mcp.js
+ls -la gemini-cli/starrocks-mcp-server/starrocks-mcp.js
 # 确认文件存在且可执行
 ```
 
