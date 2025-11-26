@@ -1217,7 +1217,23 @@ class ThinMCPServer {
           if (analysis.next_queries && analysis.next_queries.length > 0) {
             console.error(`   Executing ${analysis.next_queries.length} additional queries...`);
             const additionalResults = await this.executeQueries(analysis.next_queries);
-            results = { ...results, ...additionalResults };
+
+            // 特殊处理 desc_storage_volumes phase：将 desc_volume_<name> 结果转换为 storage_volume_details 格式
+            if (analysis.phase === 'desc_storage_volumes') {
+              const storageVolumeDetails = {};
+              for (const [key, value] of Object.entries(additionalResults)) {
+                if (key.startsWith('desc_volume_')) {
+                  const volumeName = key.replace('desc_volume_', '');
+                  storageVolumeDetails[volumeName] = value;
+                }
+              }
+              if (Object.keys(storageVolumeDetails).length > 0) {
+                results.storage_volume_details = storageVolumeDetails;
+                console.error(`   Converted ${Object.keys(storageVolumeDetails).length} volume details to storage_volume_details format`);
+              }
+            } else {
+              results = { ...results, ...additionalResults };
+            }
           }
 
           // 使用更新后的参数再次调用分析 API
