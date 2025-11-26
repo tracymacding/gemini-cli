@@ -344,8 +344,8 @@ class ThinMCPServer {
 
             const duration = Date.now() - cmdStartTime;
 
-            // 解析输出获取大小 - 使用 actual_storage_type（真实存储类型）而不是 storage_type（路径协议）
-            const sizeBytes = this.parseStorageCliOutput(cmd.actual_storage_type || cmd.storage_type, stdout);
+            // 解析输出获取大小
+            const sizeBytes = this.parseStorageCliOutput(cmd.storage_type, stdout);
 
             return {
               partition_key: cmd.partition_key,
