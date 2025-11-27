@@ -433,6 +433,144 @@ class ThinMCPServer {
   }
 
   /**
+   * 执行 SSH 命令（用于日志分析等场景）
+   * @param {Array} commands - SSH 命令列表
+   * @param {object} sshConfig - SSH 配置 { user, keyPath, password }
+   */
+  async executeSshCommands(commands, sshConfig = {}) {
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+
+    const results = {
+      ssh_results: [],
+      ssh_summary: {
+        total: commands.length,
+        successful: 0,
+        failed: 0,
+        execution_time_ms: 0
+      }
+    };
+
+    const startTime = Date.now();
+    const maxConcurrency = 5; // SSH 连接并发数较低
+    const commandTimeoutMs = 60000; // 60 秒超时（SSH 可能需要更长时间）
+
+    // 获取 SSH 配置
+    const sshUser = sshConfig.ssh_user || process.env.SSH_USER || 'root';
+    const sshKeyPath = sshConfig.ssh_key_path || process.env.SSH_KEY_PATH || '';
+    const sshPassword = sshConfig.ssh_password || process.env.SSH_PASSWORD || '';
+
+    // 构建 SSH 基础命令
+    const buildSshCmd = (nodeIp, remoteCmd) => {
+      let sshBase = `ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10`;
+      if (sshKeyPath) {
+        sshBase += ` -i "${sshKeyPath}"`;
+      }
+      // 注意：密码模式需要 sshpass，这里简化处理，优先使用密钥
+      return `${sshBase} ${sshUser}@${nodeIp} "${remoteCmd.replace(/"/g, '\\"')}"`;
+    };
+
+    // 分批并发执行
+    for (let i = 0; i < commands.length; i += maxConcurrency) {
+      const batch = commands.slice(i, i + maxConcurrency);
+
+      const batchResults = await Promise.all(
+        batch.map(async (cmd) => {
+          try {
+            const nodeIp = cmd.node_ip;
+            const remoteCmd = cmd.ssh_command;
+            const fullCmd = buildSshCmd(nodeIp, remoteCmd);
+
+            console.error(`   SSH to ${nodeIp}: ${remoteCmd.substring(0, 60)}...`);
+            const cmdStartTime = Date.now();
+
+            const { stdout, stderr } = await execAsync(fullCmd, {
+              timeout: commandTimeoutMs,
+              maxBuffer: 50 * 1024 * 1024 // 50MB（日志可能较大）
+            });
+
+            const duration = Date.now() - cmdStartTime;
+
+            // 根据命令类型处理结果
+            const commandType = cmd.command_type || 'generic';
+
+            if (commandType === 'discover_log_path') {
+              // 发现日志路径
+              return {
+                node_ip: nodeIp,
+                node_type: cmd.node_type,
+                command_type: commandType,
+                success: true,
+                output: stdout.trim(),
+                execution_time_ms: duration
+              };
+            } else if (commandType === 'fetch_log') {
+              // 获取日志内容
+              let content = stdout;
+              // 如果是压缩的，解压
+              if (cmd.options?.compress) {
+                try {
+                  const { execSync } = await import('child_process');
+                  const decoded = Buffer.from(stdout.trim(), 'base64');
+                  const { gunzipSync } = await import('zlib');
+                  content = gunzipSync(decoded).toString('utf-8');
+                } catch (decompressErr) {
+                  console.error(`   Warning: Failed to decompress log from ${nodeIp}: ${decompressErr.message}`);
+                  content = stdout; // 使用原始输出
+                }
+              }
+              return {
+                node_ip: nodeIp,
+                node_type: cmd.node_type,
+                log_file: cmd.log_file,
+                log_path: cmd.log_path,
+                command_type: commandType,
+                success: true,
+                content: content,
+                execution_time_ms: duration
+              };
+            } else {
+              // 通用命令
+              return {
+                node_ip: nodeIp,
+                node_type: cmd.node_type,
+                command_type: commandType,
+                success: true,
+                output: stdout,
+                execution_time_ms: duration
+              };
+            }
+          } catch (error) {
+            console.error(`   SSH failed for ${cmd.node_ip}: ${error.message}`);
+            return {
+              node_ip: cmd.node_ip,
+              node_type: cmd.node_type,
+              command_type: cmd.command_type,
+              success: false,
+              error: error.message
+            };
+          }
+        })
+      );
+
+      for (const result of batchResults) {
+        results.ssh_results.push(result);
+        if (result.success) {
+          results.ssh_summary.successful++;
+        } else {
+          results.ssh_summary.failed++;
+        }
+      }
+    }
+
+    results.ssh_summary.execution_time_ms = Date.now() - startTime;
+    console.error(`   SSH execution completed: ${results.ssh_summary.successful} success, ${results.ssh_summary.failed} failed`);
+
+    return results;
+  }
+
+  /**
    * 解析存储 CLI 输出获取大小（字节数）
    */
   parseStorageCliOutput(storageType, stdout) {
@@ -1279,6 +1417,34 @@ class ThinMCPServer {
             } else {
               // 默认使用 cli_results/cli_summary
               results = { ...results, ...cliResults };
+            }
+          }
+
+          // 检查是否需要执行 SSH 命令（用于日志分析）
+          if (analysis.requires_ssh_execution && analysis.ssh_commands) {
+            console.error(`   Executing ${analysis.ssh_commands.length} SSH commands...`);
+
+            // 从 args 中获取 SSH 配置
+            const sshConfig = {
+              ssh_user: processedArgs.ssh_user || analysis.next_args?.ssh_user,
+              ssh_key_path: processedArgs.ssh_key_path || analysis.next_args?.ssh_key_path,
+              ssh_password: processedArgs.ssh_password || analysis.next_args?.ssh_password
+            };
+
+            const sshResults = await this.executeSshCommands(analysis.ssh_commands, sshConfig);
+
+            // 根据 phase 使用不同的结果键名
+            if (analysis.phase === 'discover_log_paths') {
+              results.discovered_log_paths = sshResults.ssh_results;
+              results.discover_log_paths_summary = sshResults.ssh_summary;
+              console.error(`   Log path discovery completed: ${sshResults.ssh_summary.successful} success, ${sshResults.ssh_summary.failed} failed`);
+            } else if (analysis.phase === 'fetch_logs') {
+              results.log_contents = sshResults.ssh_results;
+              results.fetch_logs_summary = sshResults.ssh_summary;
+              console.error(`   Log fetch completed: ${sshResults.ssh_summary.successful} success, ${sshResults.ssh_summary.failed} failed`);
+            } else {
+              // 默认使用 ssh_results/ssh_summary
+              results = { ...results, ...sshResults };
             }
           }
 
