@@ -526,6 +526,7 @@ class ThinMCPServer {
                 log_file: cmd.log_file,
                 log_path: cmd.log_path,
                 command_type: commandType,
+                ssh_command: remoteCmd,  // 保留原始 SSH 命令用于调试
                 success: true,
                 content: content,
                 execution_time_ms: duration
