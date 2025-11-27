@@ -1245,6 +1245,22 @@ class ThinMCPServer {
         if (phaseCount >= maxPhases) {
           console.error('   Warning: Max phases reached, analysis may be incomplete');
         }
+
+        // 显示分析方式（便于用户确认是否使用了 CLI 扫描）
+        if (analysis.calculation_method) {
+          const methodNames = {
+            'object_storage_cli': '对象存储 CLI 扫描',
+            'direct_query': '直接查询 STORAGE_SIZE',
+            'cli_fallback': 'CLI 回退模式'
+          };
+          const methodName = methodNames[analysis.calculation_method] || analysis.calculation_method;
+          console.error(`   📊 数据获取方式: ${methodName}`);
+
+          if (analysis.cli_execution_summary) {
+            const s = analysis.cli_execution_summary;
+            console.error(`   📈 CLI 执行统计: 总计 ${s.total}, 成功 ${s.successful}, 失败 ${s.failed}, 耗时 ${s.execution_time_ms}ms`);
+          }
+        }
         console.error('   Analysis completed\n');
 
         // 4. 格式化报告
