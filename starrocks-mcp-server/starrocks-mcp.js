@@ -344,26 +344,74 @@ class ThinMCPServer {
 
             const duration = Date.now() - cmdStartTime;
 
-            // 解析输出获取大小
-            const sizeBytes = this.parseStorageCliOutput(cmd.storage_type, stdout);
+            // 根据命令类型返回不同格式的结果
+            const cmdType = cmd.type || '';
 
-            return {
-              partition_key: cmd.partition_key,
-              path: cmd.path,
-              storage_type: cmd.storage_type,
-              success: sizeBytes !== null,
-              size_bytes: sizeBytes,
-              execution_time_ms: duration
-            };
+            if (cmdType === 'ossutil_ls' || cmdType === 'aws_s3_ls') {
+              // 列目录命令：返回原始输出
+              return {
+                table_key: cmd.table_key,
+                table_path: cmd.table_path,
+                storage_type: cmd.storage_type,
+                type: cmdType,
+                success: true,
+                output: stdout,
+                execution_time_ms: duration
+              };
+            } else if (cmdType === 'get_size') {
+              // 获取大小命令：返回原始输出供 expert 解析
+              return {
+                table_key: cmd.table_key,
+                partition_id: cmd.partition_id,
+                path: cmd.path,
+                storage_type: cmd.storage_type,
+                success: true,
+                output: stdout.trim(),
+                execution_time_ms: duration
+              };
+            } else {
+              // 存储空间查询命令（默认）：解析大小
+              const sizeBytes = this.parseStorageCliOutput(cmd.storage_type || cmd.actual_storage_type, stdout);
+              return {
+                partition_key: cmd.partition_key,
+                path: cmd.path,
+                storage_type: cmd.storage_type,
+                success: sizeBytes !== null,
+                size_bytes: sizeBytes,
+                execution_time_ms: duration
+              };
+            }
           } catch (error) {
-            console.error(`   CLI failed for ${cmd.partition_key}: ${error.message}`);
-            return {
-              partition_key: cmd.partition_key,
-              path: cmd.path,
-              storage_type: cmd.storage_type,
-              success: false,
-              error: error.message
-            };
+            const cmdType = cmd.type || '';
+            console.error(`   CLI failed for ${cmd.partition_key || cmd.table_key}: ${error.message}`);
+
+            if (cmdType === 'ossutil_ls' || cmdType === 'aws_s3_ls') {
+              return {
+                table_key: cmd.table_key,
+                table_path: cmd.table_path,
+                storage_type: cmd.storage_type,
+                type: cmdType,
+                success: false,
+                error: error.message
+              };
+            } else if (cmdType === 'get_size') {
+              return {
+                table_key: cmd.table_key,
+                partition_id: cmd.partition_id,
+                path: cmd.path,
+                storage_type: cmd.storage_type,
+                success: false,
+                error: error.message
+              };
+            } else {
+              return {
+                partition_key: cmd.partition_key,
+                path: cmd.path,
+                storage_type: cmd.storage_type,
+                success: false,
+                error: error.message
+              };
+            }
           }
         })
       );
@@ -1210,7 +1258,20 @@ class ThinMCPServer {
           if (analysis.requires_cli_execution && analysis.cli_commands) {
             console.error(`   Executing ${analysis.cli_commands.length} CLI commands...`);
             const cliResults = await this.executeCliCommands(analysis.cli_commands);
-            results = { ...results, ...cliResults };
+
+            // 根据 phase 使用不同的结果键名
+            if (analysis.phase === 'list_table_directories') {
+              results.dir_listing_results = cliResults.cli_results;
+              results.dir_listing_summary = cliResults.cli_summary;
+              console.error(`   Directory listing completed: ${cliResults.cli_summary.successful} success, ${cliResults.cli_summary.failed} failed`);
+            } else if (analysis.phase === 'get_garbage_sizes') {
+              results.garbage_size_results = cliResults.cli_results;
+              results.garbage_size_summary = cliResults.cli_summary;
+              console.error(`   Garbage size query completed: ${cliResults.cli_summary.successful} success, ${cliResults.cli_summary.failed} failed`);
+            } else {
+              // 默认使用 cli_results/cli_summary
+              results = { ...results, ...cliResults };
+            }
           }
 
           // 执行下一阶段的 SQL 查询
