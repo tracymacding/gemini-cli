@@ -454,6 +454,14 @@ class ThinMCPServer {
           if (stdout.includes('total object count: 0')) return 0;
           break;
         }
+        case 's3cmd': {
+          // s3cmd du 输出格式: "1234567890   123 objects s3://bucket/path/"
+          const match = stdout.match(/^(\d+)\s+\d+\s+objects?/m);
+          if (match) return parseInt(match[1], 10);
+          // 空目录情况
+          if (stdout.includes('0 objects')) return 0;
+          break;
+        }
         case 'cos':
         case 'cosn': {
           // COS: "(1234567890 Bytes)" or "Total Size: 1.23 GB"
