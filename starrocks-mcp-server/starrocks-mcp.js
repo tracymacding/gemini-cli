@@ -511,7 +511,6 @@ class ThinMCPServer {
               // 如果是压缩的，解压
               if (cmd.options?.compress) {
                 try {
-                  const { execSync } = await import('child_process');
                   const decoded = Buffer.from(stdout.trim(), 'base64');
                   const { gunzipSync } = await import('zlib');
                   content = gunzipSync(decoded).toString('utf-8');
@@ -520,15 +519,21 @@ class ThinMCPServer {
                   content = stdout; // 使用原始输出
                 }
               }
+
+              // 解析多文件格式: === FILE: filename ===
+              const files = this.parseMultiFileLogContent(content, nodeIp, cmd.node_type);
+
               return {
                 node_ip: nodeIp,
                 node_type: cmd.node_type,
-                log_file: cmd.log_file,
-                log_path: cmd.log_path,
+                log_dir: cmd.log_dir,
+                file_patterns: cmd.file_patterns,
                 command_type: commandType,
                 ssh_command: remoteCmd,  // 保留原始 SSH 命令用于调试
                 success: true,
-                content: content,
+                files: files,  // 解析后的文件列表
+                total_files: files.length,
+                total_lines: files.reduce((sum, f) => sum + f.line_count, 0),
                 execution_time_ms: duration
               };
             } else {
@@ -569,6 +574,61 @@ class ThinMCPServer {
     console.error(`   SSH execution completed: ${results.ssh_summary.successful} success, ${results.ssh_summary.failed} failed`);
 
     return results;
+  }
+
+  /**
+   * 解析多文件日志内容
+   * 日志格式: === FILE: filename === 后跟文件内容
+   * @param {string} content - 原始日志内容
+   * @param {string} nodeIp - 节点 IP
+   * @param {string} nodeType - 节点类型
+   * @returns {Array<{filename: string, content: string, line_count: number}>}
+   */
+  parseMultiFileLogContent(content, nodeIp, nodeType) {
+    const files = [];
+
+    if (!content || content.trim() === '') {
+      return files;
+    }
+
+    // 按文件分隔符拆分: === FILE: filename ===
+    const filePattern = /^=== FILE: (.+?) ===/gm;
+    const parts = content.split(filePattern);
+
+    // parts 格式: [前导内容, filename1, content1, filename2, content2, ...]
+    // 跳过第一个元素（分隔符前的内容，通常为空）
+    for (let i = 1; i < parts.length; i += 2) {
+      const filename = parts[i]?.trim();
+      const fileContent = parts[i + 1]?.trim() || '';
+
+      if (filename) {
+        const lines = fileContent.split('\n');
+        files.push({
+          filename: filename,
+          node_ip: nodeIp,
+          node_type: nodeType,
+          content: fileContent,
+          line_count: lines.length,
+          size_bytes: Buffer.byteLength(fileContent, 'utf-8')
+        });
+      }
+    }
+
+    // 如果没有解析到文件分隔符，则整个内容作为单个文件处理
+    if (files.length === 0 && content.trim()) {
+      const lines = content.split('\n');
+      files.push({
+        filename: 'combined.log',
+        node_ip: nodeIp,
+        node_type: nodeType,
+        content: content,
+        line_count: lines.length,
+        size_bytes: Buffer.byteLength(content, 'utf-8')
+      });
+    }
+
+    console.error(`   Parsed ${files.length} log files from ${nodeIp}`);
+    return files;
   }
 
   /**
