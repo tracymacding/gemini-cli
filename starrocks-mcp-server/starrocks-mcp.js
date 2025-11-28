@@ -469,8 +469,9 @@ class ThinMCPServer {
     const maxConcurrency = 5; // SSH 连接并发数较低
     const commandTimeoutMs = 60000; // 60 秒超时（SSH 可能需要更长时间）
 
-    // 获取 SSH 配置
-    const sshUser = sshConfig.ssh_user || process.env.SSH_USER || 'root';
+    // 获取 SSH 配置（默认使用当前系统用户）
+    const sshUser =
+      sshConfig.ssh_user || process.env.SSH_USER || os.userInfo().username;
     const sshKeyPath = sshConfig.ssh_key_path || process.env.SSH_KEY_PATH || '';
     // 注意：密码模式需要 sshpass，暂未实现
 
