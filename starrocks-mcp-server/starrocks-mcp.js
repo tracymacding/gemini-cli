@@ -35,6 +35,10 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import mysql from 'mysql2/promise';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { gunzipSync } from 'node:zlib';
 
 class ThinMCPServer {
   constructor() {
@@ -309,8 +313,8 @@ class ThinMCPServer {
    * @returns {Object} 执行结果
    */
   async executeCliCommands(commands) {
-    const { exec } = await import('child_process');
-    const { promisify } = await import('util');
+    const { exec } = await import('node:child_process');
+    const { promisify } = await import('node:util');
     const execAsync = promisify(exec);
 
     const results = {
@@ -319,8 +323,8 @@ class ThinMCPServer {
         total: commands.length,
         successful: 0,
         failed: 0,
-        execution_time_ms: 0
-      }
+        execution_time_ms: 0,
+      },
     };
 
     const startTime = Date.now();
@@ -334,12 +338,14 @@ class ThinMCPServer {
       const batchResults = await Promise.all(
         batch.map(async (cmd) => {
           try {
-            console.error(`   Executing CLI: ${cmd.command.substring(0, 80)}...`);
+            console.error(
+              `   Executing CLI: ${cmd.command.substring(0, 80)}...`,
+            );
             const cmdStartTime = Date.now();
 
-            const { stdout, stderr } = await execAsync(cmd.command, {
+            const { stdout } = await execAsync(cmd.command, {
               timeout: commandTimeoutMs,
-              maxBuffer: 10 * 1024 * 1024 // 10MB
+              maxBuffer: 10 * 1024 * 1024, // 10MB
             });
 
             const duration = Date.now() - cmdStartTime;
@@ -356,7 +362,7 @@ class ThinMCPServer {
                 type: cmdType,
                 success: true,
                 output: stdout,
-                execution_time_ms: duration
+                execution_time_ms: duration,
               };
             } else if (cmdType === 'get_size') {
               // 获取大小命令：返回原始输出供 expert 解析
@@ -367,23 +373,28 @@ class ThinMCPServer {
                 storage_type: cmd.storage_type,
                 success: true,
                 output: stdout.trim(),
-                execution_time_ms: duration
+                execution_time_ms: duration,
               };
             } else {
               // 存储空间查询命令（默认）：解析大小
-              const sizeBytes = this.parseStorageCliOutput(cmd.storage_type || cmd.actual_storage_type, stdout);
+              const sizeBytes = this.parseStorageCliOutput(
+                cmd.storage_type || cmd.actual_storage_type,
+                stdout,
+              );
               return {
                 partition_key: cmd.partition_key,
                 path: cmd.path,
                 storage_type: cmd.storage_type,
                 success: sizeBytes !== null,
                 size_bytes: sizeBytes,
-                execution_time_ms: duration
+                execution_time_ms: duration,
               };
             }
           } catch (error) {
             const cmdType = cmd.type || '';
-            console.error(`   CLI failed for ${cmd.partition_key || cmd.table_key}: ${error.message}`);
+            console.error(
+              `   CLI failed for ${cmd.partition_key || cmd.table_key}: ${error.message}`,
+            );
 
             if (cmdType === 'ossutil_ls' || cmdType === 'aws_s3_ls') {
               return {
@@ -392,7 +403,7 @@ class ThinMCPServer {
                 storage_type: cmd.storage_type,
                 type: cmdType,
                 success: false,
-                error: error.message
+                error: error.message,
               };
             } else if (cmdType === 'get_size') {
               return {
@@ -401,7 +412,7 @@ class ThinMCPServer {
                 path: cmd.path,
                 storage_type: cmd.storage_type,
                 success: false,
-                error: error.message
+                error: error.message,
               };
             } else {
               return {
@@ -409,11 +420,11 @@ class ThinMCPServer {
                 path: cmd.path,
                 storage_type: cmd.storage_type,
                 success: false,
-                error: error.message
+                error: error.message,
               };
             }
           }
-        })
+        }),
       );
 
       for (const result of batchResults) {
@@ -427,7 +438,9 @@ class ThinMCPServer {
     }
 
     results.cli_summary.execution_time_ms = Date.now() - startTime;
-    console.error(`   CLI execution completed: ${results.cli_summary.successful} success, ${results.cli_summary.failed} failed`);
+    console.error(
+      `   CLI execution completed: ${results.cli_summary.successful} success, ${results.cli_summary.failed} failed`,
+    );
 
     return results;
   }
@@ -438,8 +451,8 @@ class ThinMCPServer {
    * @param {object} sshConfig - SSH 配置 { user, keyPath, password }
    */
   async executeSshCommands(commands, sshConfig = {}) {
-    const { exec } = await import('child_process');
-    const { promisify } = await import('util');
+    const { exec } = await import('node:child_process');
+    const { promisify } = await import('node:util');
     const execAsync = promisify(exec);
 
     const results = {
@@ -448,8 +461,8 @@ class ThinMCPServer {
         total: commands.length,
         successful: 0,
         failed: 0,
-        execution_time_ms: 0
-      }
+        execution_time_ms: 0,
+      },
     };
 
     const startTime = Date.now();
@@ -459,7 +472,7 @@ class ThinMCPServer {
     // 获取 SSH 配置
     const sshUser = sshConfig.ssh_user || process.env.SSH_USER || 'root';
     const sshKeyPath = sshConfig.ssh_key_path || process.env.SSH_KEY_PATH || '';
-    const sshPassword = sshConfig.ssh_password || process.env.SSH_PASSWORD || '';
+    // 注意：密码模式需要 sshpass，暂未实现
 
     // 构建 SSH 基础命令
     const buildSshCmd = (nodeIp, remoteCmd) => {
@@ -468,7 +481,13 @@ class ThinMCPServer {
         sshBase += ` -i "${sshKeyPath}"`;
       }
       // 注意：密码模式需要 sshpass，这里简化处理，优先使用密钥
-      return `${sshBase} ${sshUser}@${nodeIp} "${remoteCmd.replace(/"/g, '\\"')}"`;
+      // 转义 $ 和 " 以防止本地 shell 展开 $(...) 和处理引号
+      const escapedCmd = remoteCmd
+        .replace(/\\/g, '\\\\') // 先转义反斜杠
+        .replace(/"/g, '\\"') // 转义双引号
+        .replace(/\$/g, '\\$') // 转义 $ 防止本地 shell 展开
+        .replace(/`/g, '\\`'); // 转义反引号
+      return `${sshBase} ${sshUser}@${nodeIp} "${escapedCmd}"`;
     };
 
     // 分批并发执行
@@ -482,12 +501,14 @@ class ThinMCPServer {
             const remoteCmd = cmd.ssh_command;
             const fullCmd = buildSshCmd(nodeIp, remoteCmd);
 
-            console.error(`   SSH to ${nodeIp}: ${remoteCmd.substring(0, 60)}...`);
+            console.error(
+              `   SSH to ${nodeIp}: ${remoteCmd.substring(0, 60)}...`,
+            );
             const cmdStartTime = Date.now();
 
-            const { stdout, stderr } = await execAsync(fullCmd, {
+            const { stdout } = await execAsync(fullCmd, {
               timeout: commandTimeoutMs,
-              maxBuffer: 50 * 1024 * 1024 // 50MB（日志可能较大）
+              maxBuffer: 50 * 1024 * 1024, // 50MB（日志可能较大）
             });
 
             const duration = Date.now() - cmdStartTime;
@@ -503,7 +524,7 @@ class ThinMCPServer {
                 command_type: commandType,
                 success: true,
                 output: stdout.trim(),
-                execution_time_ms: duration
+                execution_time_ms: duration,
               };
             } else if (commandType === 'fetch_log') {
               // 获取日志内容
@@ -512,16 +533,22 @@ class ThinMCPServer {
               if (cmd.options?.compress) {
                 try {
                   const decoded = Buffer.from(stdout.trim(), 'base64');
-                  const { gunzipSync } = await import('zlib');
+                  const { gunzipSync } = await import('node:zlib');
                   content = gunzipSync(decoded).toString('utf-8');
                 } catch (decompressErr) {
-                  console.error(`   Warning: Failed to decompress log from ${nodeIp}: ${decompressErr.message}`);
+                  console.error(
+                    `   Warning: Failed to decompress log from ${nodeIp}: ${decompressErr.message}`,
+                  );
                   content = stdout; // 使用原始输出
                 }
               }
 
               // 解析多文件格式: === FILE: filename ===
-              const files = this.parseMultiFileLogContent(content, nodeIp, cmd.node_type);
+              const files = this.parseMultiFileLogContent(
+                content,
+                nodeIp,
+                cmd.node_type,
+              );
 
               return {
                 node_ip: nodeIp,
@@ -529,12 +556,136 @@ class ThinMCPServer {
                 log_dir: cmd.log_dir,
                 file_patterns: cmd.file_patterns,
                 command_type: commandType,
-                ssh_command: remoteCmd,  // 保留原始 SSH 命令用于调试
+                ssh_command: remoteCmd, // 保留原始 SSH 命令用于调试
                 success: true,
-                files: files,  // 解析后的文件列表
+                files: files, // 解析后的文件列表
                 total_files: files.length,
                 total_lines: files.reduce((sum, f) => sum + f.line_count, 0),
-                execution_time_ms: duration
+                execution_time_ms: duration,
+              };
+            } else if (commandType === 'fetch_log_scp') {
+              // 使用流式传输避免 maxBuffer 限制
+              // SSH 输出直接流式写入本地临时文件，然后读取解压
+              const tmpDir = os.tmpdir();
+              const tmpFile = path.join(
+                tmpDir,
+                `sr_log_${nodeIp.replace(/\./g, '_')}_${Date.now()}.gz`,
+              );
+
+              console.error(`   SCP mode: streaming to ${tmpFile}`);
+
+              // 构建 SSH 参数（不需要转义，spawn 直接传参）
+              const sshArgs = [
+                '-o',
+                'StrictHostKeyChecking=no',
+                '-o',
+                'ConnectTimeout=10',
+                '-T',
+              ];
+              if (sshKeyPath) {
+                sshArgs.push('-i', sshKeyPath);
+              }
+              sshArgs.push(`${sshUser}@${nodeIp}`, remoteCmd);
+
+              // 使用 spawn 流式执行，输出写入临时文件
+              await new Promise((resolve, reject) => {
+                const writeStream = fs.createWriteStream(tmpFile);
+                const sshProcess = spawn('ssh', sshArgs);
+
+                sshProcess.stdout.pipe(writeStream);
+
+                let stderrData = '';
+                sshProcess.stderr.on('data', (data) => {
+                  stderrData += data.toString();
+                });
+
+                writeStream.on('finish', () => {
+                  if (
+                    sshProcess.exitCode === 0 ||
+                    sshProcess.exitCode === null
+                  ) {
+                    resolve();
+                  }
+                });
+
+                sshProcess.on('close', (code) => {
+                  writeStream.end();
+                  if (code === 0) {
+                    resolve();
+                  } else {
+                    reject(
+                      new Error(`SSH exited with code ${code}: ${stderrData}`),
+                    );
+                  }
+                });
+
+                sshProcess.on('error', (err) => {
+                  writeStream.end();
+                  reject(err);
+                });
+
+                // 超时处理（5分钟，大文件需要更长时间）
+                const timeout = setTimeout(
+                  () => {
+                    sshProcess.kill('SIGTERM');
+                    writeStream.end();
+                    reject(new Error('SSH timeout (5 min)'));
+                  },
+                  5 * 60 * 1000,
+                );
+
+                sshProcess.on('close', () => clearTimeout(timeout));
+              });
+
+              const duration = Date.now() - cmdStartTime;
+
+              // 读取并解压临时文件
+              let content;
+              const compressedData = fs.readFileSync(tmpFile);
+              const compressedSize = compressedData.length;
+
+              try {
+                content = gunzipSync(compressedData).toString('utf-8');
+                console.error(
+                  `   Decompressed: ${compressedSize} -> ${content.length} bytes`,
+                );
+              } catch (decompressErr) {
+                console.error(
+                  `   Warning: Failed to decompress, using raw content: ${decompressErr.message}`,
+                );
+                content = compressedData.toString('utf-8');
+              }
+
+              // 清理临时文件
+              try {
+                fs.unlinkSync(tmpFile);
+              } catch (cleanupErr) {
+                console.error(
+                  `   Warning: Failed to delete temp file: ${cleanupErr.message}`,
+                );
+              }
+
+              // 解析多文件格式: === FILE: filename ===
+              const files = this.parseMultiFileLogContent(
+                content,
+                nodeIp,
+                cmd.node_type,
+              );
+
+              return {
+                node_ip: nodeIp,
+                node_type: cmd.node_type,
+                log_dir: cmd.log_dir,
+                file_patterns: cmd.file_patterns,
+                command_type: commandType,
+                ssh_command: remoteCmd,
+                success: true,
+                files: files,
+                total_files: files.length,
+                total_lines: files.reduce((sum, f) => sum + f.line_count, 0),
+                compressed_size: compressedSize,
+                decompressed_size: content.length,
+                execution_time_ms: duration,
               };
             } else {
               // 通用命令
@@ -544,7 +695,7 @@ class ThinMCPServer {
                 command_type: commandType,
                 success: true,
                 output: stdout,
-                execution_time_ms: duration
+                execution_time_ms: duration,
               };
             }
           } catch (error) {
@@ -552,12 +703,14 @@ class ThinMCPServer {
             return {
               node_ip: cmd.node_ip,
               node_type: cmd.node_type,
+              log_dir: cmd.log_dir, // 即使失败也保留 log_dir
+              file_patterns: cmd.file_patterns,
               command_type: cmd.command_type,
               success: false,
-              error: error.message
+              error: error.message,
             };
           }
-        })
+        }),
       );
 
       for (const result of batchResults) {
@@ -571,7 +724,9 @@ class ThinMCPServer {
     }
 
     results.ssh_summary.execution_time_ms = Date.now() - startTime;
-    console.error(`   SSH execution completed: ${results.ssh_summary.successful} success, ${results.ssh_summary.failed} failed`);
+    console.error(
+      `   SSH execution completed: ${results.ssh_summary.successful} success, ${results.ssh_summary.failed} failed`,
+    );
 
     return results;
   }
@@ -609,7 +764,7 @@ class ThinMCPServer {
           node_type: nodeType,
           content: fileContent,
           line_count: lines.length,
-          size_bytes: Buffer.byteLength(fileContent, 'utf-8')
+          size_bytes: Buffer.byteLength(fileContent, 'utf-8'),
         });
       }
     }
@@ -623,7 +778,7 @@ class ThinMCPServer {
         node_type: nodeType,
         content: content,
         line_count: lines.length,
-        size_bytes: Buffer.byteLength(content, 'utf-8')
+        size_bytes: Buffer.byteLength(content, 'utf-8'),
       });
     }
 
@@ -688,7 +843,9 @@ class ThinMCPServer {
         }
       }
     } catch (e) {
-      console.error(`   Failed to parse CLI output for ${storageType}: ${e.message}`);
+      console.error(
+        `   Failed to parse CLI output for ${storageType}: ${e.message}`,
+      );
     }
     return null;
   }
@@ -1456,25 +1613,38 @@ class ThinMCPServer {
         // 3.5 处理多阶段查询（如存储放大分析的 schema 检测）
         let phaseCount = 1;
         const maxPhases = 5; // 防止无限循环
-        while (analysis.status === 'needs_more_queries' && phaseCount < maxPhases) {
+        while (
+          analysis.status === 'needs_more_queries' &&
+          phaseCount < maxPhases
+        ) {
           phaseCount++;
-          console.error(`   Step 3.${phaseCount}: Multi-phase query detected (${analysis.phase})`);
+          console.error(
+            `   Step 3.${phaseCount}: Multi-phase query detected (${analysis.phase})`,
+          );
           console.error(`   Message: ${analysis.message}`);
 
           // 检查是否需要执行 CLI 命令
           if (analysis.requires_cli_execution && analysis.cli_commands) {
-            console.error(`   Executing ${analysis.cli_commands.length} CLI commands...`);
-            const cliResults = await this.executeCliCommands(analysis.cli_commands);
+            console.error(
+              `   Executing ${analysis.cli_commands.length} CLI commands...`,
+            );
+            const cliResults = await this.executeCliCommands(
+              analysis.cli_commands,
+            );
 
             // 根据 phase 使用不同的结果键名
             if (analysis.phase === 'list_table_directories') {
               results.dir_listing_results = cliResults.cli_results;
               results.dir_listing_summary = cliResults.cli_summary;
-              console.error(`   Directory listing completed: ${cliResults.cli_summary.successful} success, ${cliResults.cli_summary.failed} failed`);
+              console.error(
+                `   Directory listing completed: ${cliResults.cli_summary.successful} success, ${cliResults.cli_summary.failed} failed`,
+              );
             } else if (analysis.phase === 'get_garbage_sizes') {
               results.garbage_size_results = cliResults.cli_results;
               results.garbage_size_summary = cliResults.cli_summary;
-              console.error(`   Garbage size query completed: ${cliResults.cli_summary.successful} success, ${cliResults.cli_summary.failed} failed`);
+              console.error(
+                `   Garbage size query completed: ${cliResults.cli_summary.successful} success, ${cliResults.cli_summary.failed} failed`,
+              );
             } else {
               // 默认使用 cli_results/cli_summary
               results = { ...results, ...cliResults };
@@ -1483,26 +1653,37 @@ class ThinMCPServer {
 
           // 检查是否需要执行 SSH 命令（用于日志分析）
           if (analysis.requires_ssh_execution && analysis.ssh_commands) {
-            console.error(`   Executing ${analysis.ssh_commands.length} SSH commands...`);
+            console.error(
+              `   Executing ${analysis.ssh_commands.length} SSH commands...`,
+            );
 
             // 从 args 中获取 SSH 配置
             const sshConfig = {
               ssh_user: processedArgs.ssh_user || analysis.next_args?.ssh_user,
-              ssh_key_path: processedArgs.ssh_key_path || analysis.next_args?.ssh_key_path,
-              ssh_password: processedArgs.ssh_password || analysis.next_args?.ssh_password
+              ssh_key_path:
+                processedArgs.ssh_key_path || analysis.next_args?.ssh_key_path,
+              ssh_password:
+                processedArgs.ssh_password || analysis.next_args?.ssh_password,
             };
 
-            const sshResults = await this.executeSshCommands(analysis.ssh_commands, sshConfig);
+            const sshResults = await this.executeSshCommands(
+              analysis.ssh_commands,
+              sshConfig,
+            );
 
             // 根据 phase 使用不同的结果键名
             if (analysis.phase === 'discover_log_paths') {
               results.discovered_log_paths = sshResults.ssh_results;
               results.discover_log_paths_summary = sshResults.ssh_summary;
-              console.error(`   Log path discovery completed: ${sshResults.ssh_summary.successful} success, ${sshResults.ssh_summary.failed} failed`);
+              console.error(
+                `   Log path discovery completed: ${sshResults.ssh_summary.successful} success, ${sshResults.ssh_summary.failed} failed`,
+              );
             } else if (analysis.phase === 'fetch_logs') {
               results.log_contents = sshResults.ssh_results;
               results.fetch_logs_summary = sshResults.ssh_summary;
-              console.error(`   Log fetch completed: ${sshResults.ssh_summary.successful} success, ${sshResults.ssh_summary.failed} failed`);
+              console.error(
+                `   Log fetch completed: ${sshResults.ssh_summary.successful} success, ${sshResults.ssh_summary.failed} failed`,
+              );
             } else {
               // 默认使用 ssh_results/ssh_summary
               results = { ...results, ...sshResults };
@@ -1511,8 +1692,12 @@ class ThinMCPServer {
 
           // 执行下一阶段的 SQL 查询
           if (analysis.next_queries && analysis.next_queries.length > 0) {
-            console.error(`   Executing ${analysis.next_queries.length} additional queries...`);
-            const additionalResults = await this.executeQueries(analysis.next_queries);
+            console.error(
+              `   Executing ${analysis.next_queries.length} additional queries...`,
+            );
+            const additionalResults = await this.executeQueries(
+              analysis.next_queries,
+            );
 
             // 特殊处理 desc_storage_volumes phase：将 desc_volume_<name> 结果转换为 storage_volume_details 格式
             if (analysis.phase === 'desc_storage_volumes') {
@@ -1525,7 +1710,9 @@ class ThinMCPServer {
               }
               if (Object.keys(storageVolumeDetails).length > 0) {
                 results.storage_volume_details = storageVolumeDetails;
-                console.error(`   Converted ${Object.keys(storageVolumeDetails).length} volume details to storage_volume_details format`);
+                console.error(
+                  `   Converted ${Object.keys(storageVolumeDetails).length} volume details to storage_volume_details format`,
+                );
               }
             } else {
               results = { ...results, ...additionalResults };
@@ -1535,26 +1722,36 @@ class ThinMCPServer {
           // 使用更新后的参数再次调用分析 API
           const nextArgs = analysis.next_args || processedArgs;
           console.error(`   Re-analyzing with updated args...`);
-          analysis = await this.analyzeResultsWithAPI(toolName, results, nextArgs);
+          analysis = await this.analyzeResultsWithAPI(
+            toolName,
+            results,
+            nextArgs,
+          );
         }
 
         if (phaseCount >= maxPhases) {
-          console.error('   Warning: Max phases reached, analysis may be incomplete');
+          console.error(
+            '   Warning: Max phases reached, analysis may be incomplete',
+          );
         }
 
         // 显示分析方式（便于用户确认是否使用了 CLI 扫描）
         if (analysis.calculation_method) {
           const methodNames = {
-            'object_storage_cli': '对象存储 CLI 扫描',
-            'direct_query': '直接查询 STORAGE_SIZE',
-            'cli_fallback': 'CLI 回退模式'
+            object_storage_cli: '对象存储 CLI 扫描',
+            direct_query: '直接查询 STORAGE_SIZE',
+            cli_fallback: 'CLI 回退模式',
           };
-          const methodName = methodNames[analysis.calculation_method] || analysis.calculation_method;
+          const methodName =
+            methodNames[analysis.calculation_method] ||
+            analysis.calculation_method;
           console.error(`   📊 数据获取方式: ${methodName}`);
 
           if (analysis.cli_execution_summary) {
             const s = analysis.cli_execution_summary;
-            console.error(`   📈 CLI 执行统计: 总计 ${s.total}, 成功 ${s.successful}, 失败 ${s.failed}, 耗时 ${s.execution_time_ms}ms`);
+            console.error(
+              `   📈 CLI 执行统计: 总计 ${s.total}, 成功 ${s.successful}, 失败 ${s.failed}, 耗时 ${s.execution_time_ms}ms`,
+            );
           }
         }
         console.error('   Analysis completed\n');
