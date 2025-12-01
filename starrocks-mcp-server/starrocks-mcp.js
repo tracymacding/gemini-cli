@@ -40,8 +40,473 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { gunzipSync } from 'node:zlib';
 
+/**
+ * Logger - 日志记录工具类
+ *
+ * 功能：
+ * - JSON 格式日志
+ * - 按日期自动轮转
+ * - 敏感信息自动脱敏
+ * - 支持多种日志级别
+ */
+class Logger {
+  constructor(logDir = './logs', enabled = true) {
+    this.enabled = enabled;
+    this.logDir = logDir;
+    this.currentDate = null;
+    this.logStream = null;
+    this.requestId = 0; // 请求计数器
+
+    // 如果禁用日志，不初始化日志流
+    if (!this.enabled) {
+      console.error('   Logging is disabled');
+      return;
+    }
+
+    // 确保日志目录存在
+    if (!fs.existsSync(this.logDir)) {
+      fs.mkdirSync(this.logDir, { recursive: true });
+    }
+
+    this.initLogStream();
+  }
+
+  /**
+   * 初始化日志流
+   */
+  initLogStream() {
+    const today = new Date().toISOString().split('T')[0];
+
+    // 如果日期变化，关闭旧的日志流
+    if (this.currentDate !== today && this.logStream) {
+      this.logStream.end();
+      this.logStream = null;
+    }
+
+    if (!this.logStream) {
+      this.currentDate = today;
+      const logFile = path.join(this.logDir, `mcp-server-${today}.log`);
+      this.logStream = fs.createWriteStream(logFile, { flags: 'a' });
+    }
+  }
+
+  /**
+   * 生成新的请求 ID
+   */
+  generateRequestId() {
+    this.requestId++;
+    return `req_${Date.now()}_${this.requestId}`;
+  }
+
+  /**
+   * 脱敏敏感信息
+   */
+  sanitize(data) {
+    if (!data || typeof data !== 'object') {
+      return data;
+    }
+
+    const sanitized = JSON.parse(JSON.stringify(data));
+    const sensitiveKeys = [
+      'password',
+      'token',
+      'apiToken',
+      'api_token',
+      'secret',
+      'ssh_password',
+      'SR_PASSWORD',
+      'CENTRAL_API_TOKEN',
+    ];
+
+    const maskValue = (obj) => {
+      if (!obj || typeof obj !== 'object') return;
+
+      for (const key in obj) {
+        if (
+          sensitiveKeys.some((sk) =>
+            key.toLowerCase().includes(sk.toLowerCase()),
+          )
+        ) {
+          obj[key] = obj[key] ? '***MASKED***' : '';
+        } else if (typeof obj[key] === 'object') {
+          maskValue(obj[key]);
+        }
+      }
+    };
+
+    maskValue(sanitized);
+    return sanitized;
+  }
+
+  /**
+   * 生成数据摘要（避免大对象打爆日志）
+   * @param {*} data - 要摘要的数据
+   * @param {number} maxSize - 最大 JSON 字符串长度（默认 1KB）
+   * @returns {Object} 摘要对象
+   */
+  summarizeData(data, maxSize = 1024) {
+    if (!data) {
+      return null;
+    }
+
+    const jsonStr = JSON.stringify(data);
+    const sizeBytes = jsonStr.length;
+
+    // 如果数据较小，直接返回
+    if (sizeBytes <= maxSize) {
+      return {
+        _summary: false,
+        data: data,
+        sizeBytes,
+      };
+    }
+
+    // 数据过大，返回摘要
+    const summary = {
+      _summary: true,
+      sizeBytes,
+      sizeKB: (sizeBytes / 1024).toFixed(2),
+      type: Array.isArray(data) ? 'array' : typeof data,
+    };
+
+    // 添加类型特定的摘要信息
+    if (Array.isArray(data)) {
+      summary.length = data.length;
+      summary.sample = data.slice(0, 2); // 只保留前2个元素作为样本
+    } else if (typeof data === 'object') {
+      summary.keys = Object.keys(data).slice(0, 10); // 只保留前10个键名
+      summary.totalKeys = Object.keys(data).length;
+    }
+
+    return summary;
+  }
+
+  /**
+   * 生成 HTTP body 摘要
+   * @param {*} body - 请求或响应体
+   * @returns {Object} 摘要对象
+   */
+  summarizeHttpBody(body) {
+    if (!body) {
+      return null;
+    }
+
+    const jsonStr = JSON.stringify(body);
+    const sizeBytes = jsonStr.length;
+
+    // 小于 2KB 的请求体直接记录
+    if (sizeBytes <= 2048) {
+      return this.sanitize(body);
+    }
+
+    // 大请求体只记录摘要
+    const summary = {
+      _truncated: true,
+      sizeBytes,
+      sizeKB: (sizeBytes / 1024).toFixed(2),
+    };
+
+    // 记录关键字段
+    if (body.args) {
+      const argsStr = JSON.stringify(body.args);
+      if (argsStr.length <= 512) {
+        summary.args = this.sanitize(body.args);
+      } else {
+        summary.args = {
+          _truncated: true,
+          sizeBytes: argsStr.length,
+          keys: Object.keys(body.args),
+        };
+      }
+    }
+
+    if (body.results) {
+      const resultsStr = JSON.stringify(body.results);
+      summary.results = {
+        _truncated: true,
+        sizeBytes: resultsStr.length,
+        sizeKB: (resultsStr.length / 1024).toFixed(2),
+        keys: Object.keys(body.results).slice(0, 10),
+        totalKeys: Object.keys(body.results).length,
+      };
+    }
+
+    return summary;
+  }
+
+  /**
+   * 写入日志
+   * @param {boolean} skipSanitize - 是否跳过敏感信息脱敏（默认 false）
+   */
+  write(level, type, message, data = {}, skipSanitize = false) {
+    // 如果日志被禁用，直接返回
+    if (!this.enabled) {
+      return;
+    }
+
+    this.initLogStream(); // 确保日志流有效（处理日期变化）
+
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      level,
+      type,
+      message,
+      ...(skipSanitize ? data : this.sanitize(data)),
+    };
+
+    this.logStream.write(JSON.stringify(logEntry) + '\n');
+  }
+
+  /**
+   * 记录客户端请求（MCP 请求）
+   */
+  logClientRequest(requestId, toolName, args) {
+    this.write('INFO', 'CLIENT_REQUEST', 'Received request from client', {
+      requestId,
+      toolName,
+      args: this.sanitize(args),
+    });
+  }
+
+  /**
+   * 记录中心服务器请求
+   */
+  logCentralRequest(requestId, method, url, body = null) {
+    this.write('INFO', 'CENTRAL_REQUEST', 'Sending request to central API', {
+      requestId,
+      method,
+      url,
+      body: body ? this.summarizeHttpBody(body) : null,
+    });
+  }
+
+  /**
+   * 记录中心服务器响应
+   */
+  logCentralResponse(requestId, url, status, data, error = null) {
+    const level = error ? 'ERROR' : 'INFO';
+    const message = error
+      ? 'Central API request failed'
+      : 'Received response from central API';
+
+    // 计算响应大小
+    let dataSize = 0;
+    let dataSummary = null;
+
+    if (data) {
+      const dataStr = JSON.stringify(data);
+      dataSize = dataStr.length;
+
+      // 如果响应数据较大（>5KB），记录摘要而不是完整数据
+      if (dataSize > 5120) {
+        dataSummary = {
+          _truncated: true,
+          sizeBytes: dataSize,
+          sizeKB: (dataSize / 1024).toFixed(2),
+          sizeMB: (dataSize / 1024 / 1024).toFixed(2),
+          keys:
+            typeof data === 'object'
+              ? Object.keys(data).slice(0, 10)
+              : undefined,
+          totalKeys:
+            typeof data === 'object' ? Object.keys(data).length : undefined,
+        };
+      } else {
+        // 小响应可以记录完整数据（但仍然脱敏）
+        dataSummary = this.sanitize(data);
+      }
+    }
+
+    this.write(level, 'CENTRAL_RESPONSE', message, {
+      requestId,
+      url,
+      status,
+      dataSize,
+      dataSizeKB: (dataSize / 1024).toFixed(2),
+      data: dataSummary,
+      error: error ? error.message : null,
+    });
+  }
+
+  /**
+   * 生成 MySQL 命令行字符串（用于调试和复现）
+   * @param {Object} dbConfig - 数据库配置
+   * @param {string} sql - SQL 语句
+   * @returns {string} MySQL 命令字符串
+   */
+  generateMysqlCommand(dbConfig, sql) {
+    if (!dbConfig) {
+      return null;
+    }
+
+    const parts = ['mysql'];
+
+    // 添加连接参数
+    if (dbConfig.host) {
+      parts.push(`-h${dbConfig.host}`);
+    }
+    if (dbConfig.port) {
+      parts.push(`-P${dbConfig.port}`);
+    }
+    if (dbConfig.user) {
+      parts.push(`-u${dbConfig.user}`);
+    }
+    if (dbConfig.password) {
+      // 完整打印密码（不脱敏），方便直接复制命令执行
+      parts.push(`-p'${dbConfig.password}'`);
+    }
+
+    // 添加 SQL 语句（如果提供）
+    if (sql) {
+      // 如果 SQL 太长，截断
+      const displaySql = sql.length > 200 ? sql.substring(0, 200) + '...' : sql;
+      // 转义单引号
+      const escapedDisplaySql = displaySql.replace(/'/g, "\\'");
+      parts.push(`-e '${escapedDisplaySql}'`);
+    }
+
+    return parts.join(' ');
+  }
+
+  /**
+   * 记录数据库查询
+   */
+  logDatabaseQuery(
+    requestId,
+    queryId,
+    sql,
+    queryType = 'sql',
+    dbConfig = null,
+  ) {
+    const logData = {
+      requestId,
+      queryId,
+      queryType,
+      sql: sql
+        ? sql.length > 200
+          ? sql.substring(0, 200) + '...'
+          : sql
+        : null,
+    };
+
+    // 如果提供了数据库配置，生成完整的 MySQL 命令
+    if (dbConfig) {
+      logData.mysqlCommand = this.generateMysqlCommand(dbConfig, sql);
+      logData.connectionInfo = {
+        host: dbConfig.host,
+        port: dbConfig.port,
+        user: dbConfig.user,
+        password: dbConfig.password, // 完整打印密码（不脱敏）
+      };
+    }
+
+    // 跳过脱敏，完整记录数据库连接信息
+    this.write('INFO', 'DB_QUERY', 'Executing database query', logData, true);
+  }
+
+  /**
+   * 记录数据库查询结果
+   */
+  logDatabaseResult(requestId, queryId, rowCount, error = null) {
+    const level = error ? 'ERROR' : 'INFO';
+    const message = error
+      ? 'Database query failed'
+      : 'Database query completed';
+
+    this.write(level, 'DB_RESULT', message, {
+      requestId,
+      queryId,
+      rowCount,
+      error: error ? error.message : null,
+    });
+  }
+
+  /**
+   * 记录 Prometheus 查询
+   */
+  logPrometheusQuery(requestId, queryId, query, queryType) {
+    this.write('INFO', 'PROMETHEUS_QUERY', 'Executing Prometheus query', {
+      requestId,
+      queryId,
+      queryType,
+      query: query
+        ? query.length > 200
+          ? query.substring(0, 200) + '...'
+          : query
+        : null,
+    });
+  }
+
+  /**
+   * 记录 Prometheus 查询结果
+   */
+  logPrometheusResult(requestId, queryId, resultSize, error = null) {
+    const level = error ? 'ERROR' : 'INFO';
+    const message = error
+      ? 'Prometheus query failed'
+      : 'Prometheus query completed';
+
+    this.write(level, 'PROMETHEUS_RESULT', message, {
+      requestId,
+      queryId,
+      resultSize,
+      error: error ? error.message : null,
+    });
+  }
+
+  /**
+   * 记录通用错误
+   */
+  logError(requestId, message, error) {
+    this.write('ERROR', 'ERROR', message, {
+      requestId,
+      error: error.message,
+      stack: error.stack,
+    });
+  }
+
+  /**
+   * 记录环境变量
+   */
+  logEnvironmentVariables() {
+    const envVars = {};
+    const sortedKeys = Object.keys(process.env).sort();
+    sortedKeys.forEach((key) => {
+      envVars[key] = process.env[key];
+    });
+
+    // 跳过脱敏，完整记录所有环境变量
+    this.write(
+      'INFO',
+      'STARTUP',
+      'Environment variables at startup',
+      {
+        environmentVariables: envVars,
+      },
+      true,
+    );
+  }
+
+  /**
+   * 关闭日志流
+   */
+  close() {
+    if (this.logStream) {
+      this.logStream.end();
+    }
+  }
+}
+
 class ThinMCPServer {
   constructor() {
+    // 初始化 Logger
+    const scriptDir = path.dirname(new URL(import.meta.url).pathname);
+    const logDir = path.join(scriptDir, 'logs');
+
+    // 从环境变量读取日志配置（默认启用）
+    const loggingEnabled = process.env.ENABLE_LOGGING !== 'false';
+    this.logger = new Logger(logDir, loggingEnabled);
+
     // 中心 API 配置
     this.centralAPI = process.env.CENTRAL_API || 'http://localhost:80';
     this.apiToken = process.env.CENTRAL_API_TOKEN || '';
@@ -72,6 +537,22 @@ class ThinMCPServer {
     console.error(
       `   Prometheus: ${this.prometheusConfig.protocol}://${this.prometheusConfig.host}:${this.prometheusConfig.port}`,
     );
+    console.error(`   Logging: ${loggingEnabled ? 'enabled' : 'disabled'}`);
+    if (loggingEnabled) {
+      console.error(`   Log directory: ${logDir}`);
+    }
+
+    // 打印所有环境变量到 console 和日志文件
+    console.error('\n📋 Environment Variables:');
+    const envVars = Object.keys(process.env).sort();
+    envVars.forEach((key) => {
+      console.error(`   ${key}=${process.env[key]}`);
+    });
+
+    // 记录环境变量到日志文件
+    if (loggingEnabled) {
+      this.logger.logEnvironmentVariables();
+    }
   }
 
   /**
@@ -122,16 +603,23 @@ class ThinMCPServer {
   /**
    * 从中心 API 获取 SQL 查询定义
    */
-  async getQueriesFromAPI(toolName, args = {}) {
+  async getQueriesFromAPI(toolName, args = {}, requestId = null) {
+    const url = `${this.centralAPI}/api/queries/${toolName}`;
+
     try {
       // 使用 POST 请求，将 args 放在请求体中避免 URL 过长
-      const url = `${this.centralAPI}/api/queries/${toolName}`;
-
       const headers = {
         'Content-Type': 'application/json',
       };
       if (this.apiToken) {
         headers['X-API-Key'] = this.apiToken;
+      }
+
+      const body = { args };
+
+      // 记录中心服务器请求
+      if (requestId) {
+        this.logger.logCentralRequest(requestId, 'POST', url, body);
       }
 
       console.error(`   Fetching queries from: ${url}`);
@@ -140,16 +628,34 @@ class ThinMCPServer {
       const response = await fetch(url, {
         method: 'POST',
         headers: headers,
-        body: JSON.stringify({ args }),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok) {
-        throw new Error(
+        const error = new Error(
           `API returned ${response.status}: ${response.statusText}`,
         );
+        // 记录失败响应
+        if (requestId) {
+          this.logger.logCentralResponse(
+            requestId,
+            url,
+            response.status,
+            null,
+            error,
+          );
+        }
+        throw error;
       }
 
-      return await response.json();
+      const data = await response.json();
+
+      // 记录成功响应
+      if (requestId) {
+        this.logger.logCentralResponse(requestId, url, response.status, data);
+      }
+
+      return data;
     } catch (error) {
       throw new Error(
         `Failed to get queries for ${toolName}: ${error.message}`,
@@ -160,7 +666,7 @@ class ThinMCPServer {
   /**
    * 执行查询（SQL + Prometheus）
    */
-  async executeQueries(queries) {
+  async executeQueries(queries, requestId = null) {
     const results = {};
     let connection = null;
 
@@ -180,10 +686,37 @@ class ThinMCPServer {
         for (const query of sqlQueries) {
           try {
             console.error(`Executing SQL query: ${query.id}`);
+
+            // 记录数据库查询（包含完整的 MySQL 命令）
+            if (requestId) {
+              this.logger.logDatabaseQuery(
+                requestId,
+                query.id,
+                query.sql,
+                'sql',
+                this.dbConfig,
+              );
+            }
+
             const [rows] = await connection.query(query.sql);
             results[query.id] = rows;
+
+            // 记录查询结果
+            if (requestId) {
+              this.logger.logDatabaseResult(
+                requestId,
+                query.id,
+                Array.isArray(rows) ? rows.length : 0,
+              );
+            }
           } catch (error) {
             console.error(`SQL Query ${query.id} failed:`, error.message);
+
+            // 记录查询失败
+            if (requestId) {
+              this.logger.logDatabaseResult(requestId, query.id, 0, error);
+            }
+
             results[query.id] = {
               error: error.message,
               sql: query.sql ? query.sql.substring(0, 100) + '...' : 'N/A',
@@ -201,13 +734,38 @@ class ThinMCPServer {
         console.error(
           `Executing Prometheus query: ${query.id} (${query.type})`,
         );
+
+        // 记录 Prometheus 查询
+        if (requestId) {
+          this.logger.logPrometheusQuery(
+            requestId,
+            query.id,
+            query.query,
+            query.type,
+          );
+        }
+
         if (query.type === 'prometheus_range') {
           results[query.id] = await this.queryPrometheusRange(query);
         } else {
           results[query.id] = await this.queryPrometheusInstant(query);
         }
+
+        // 记录查询结果
+        if (requestId) {
+          const resultSize = results[query.id]
+            ? JSON.stringify(results[query.id]).length
+            : 0;
+          this.logger.logPrometheusResult(requestId, query.id, resultSize);
+        }
       } catch (error) {
         console.error(`Prometheus Query ${query.id} failed:`, error.message);
+
+        // 记录查询失败
+        if (requestId) {
+          this.logger.logPrometheusResult(requestId, query.id, 0, error);
+        }
+
         results[query.id] = {
           error: error.message,
           query: query.query ? query.query.substring(0, 100) + '...' : 'N/A',
@@ -1259,9 +1817,10 @@ class ThinMCPServer {
   /**
    * 发送结果给中心 API 进行分析
    */
-  async analyzeResultsWithAPI(toolName, results, args = {}) {
+  async analyzeResultsWithAPI(toolName, results, args = {}, requestId = null) {
+    const url = `${this.centralAPI}/api/analyze/${toolName}`;
+
     try {
-      const url = `${this.centralAPI}/api/analyze/${toolName}`;
       const headers = {
         'Content-Type': 'application/json',
       };
@@ -1293,19 +1852,44 @@ class ThinMCPServer {
         }
       }
 
+      const body = { results, args: processedArgs };
+
+      // 记录中心服务器请求（传递完整 body，Logger 会自动生成摘要）
+      if (requestId) {
+        this.logger.logCentralRequest(requestId, 'POST', url, body);
+      }
+
       const response = await fetch(url, {
         method: 'POST',
         headers: headers,
-        body: JSON.stringify({ results, args: processedArgs }),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok) {
-        throw new Error(
+        const error = new Error(
           `API returned ${response.status}: ${response.statusText}`,
         );
+        // 记录失败响应
+        if (requestId) {
+          this.logger.logCentralResponse(
+            requestId,
+            url,
+            response.status,
+            null,
+            error,
+          );
+        }
+        throw error;
       }
 
-      return await response.json();
+      const data = await response.json();
+
+      // 记录成功响应
+      if (requestId) {
+        this.logger.logCentralResponse(requestId, url, response.status, data);
+      }
+
+      return data;
     } catch (error) {
       throw new Error(`Failed to analyze results: ${error.message}`);
     }
@@ -1525,8 +2109,12 @@ class ThinMCPServer {
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name: toolName, arguments: args } = request.params;
 
+      // 生成请求 ID 并记录客户端请求
+      const requestId = this.logger.generateRequestId();
+      this.logger.logClientRequest(requestId, toolName, args);
+
       try {
-        console.error(`\n🔧 Executing tool: ${toolName}`);
+        console.error(`\n🔧 [${requestId}] Executing tool: ${toolName}`);
         console.error(`   Arguments:`, JSON.stringify(args).substring(0, 200));
 
         // 0. 处理文件路径参数（如果有的话）
@@ -1536,7 +2124,11 @@ class ThinMCPServer {
 
         // 1. 从 API 获取需要执行的 SQL（传递处理后的 args 参数）
         console.error('   Step 1: Fetching SQL queries from Central API...');
-        const queryDef = await this.getQueriesFromAPI(toolName, processedArgs);
+        const queryDef = await this.getQueriesFromAPI(
+          toolName,
+          processedArgs,
+          requestId,
+        );
         console.error(`   Got ${queryDef.queries.length} queries to execute`);
 
         let results = {};
@@ -1552,7 +2144,7 @@ class ThinMCPServer {
         // 2. 执行 SQL（如果有的话）
         if (regularQueries.length > 0) {
           console.error('   Step 2: Executing SQL queries locally...');
-          results = await this.executeQueries(regularQueries);
+          results = await this.executeQueries(regularQueries, requestId);
           console.error('   SQL execution completed');
         } else {
           console.error(
@@ -1609,6 +2201,7 @@ class ThinMCPServer {
           toolName,
           results,
           processedArgs,
+          requestId,
         );
 
         // 3.5 处理多阶段查询（如存储放大分析的 schema 检测）
@@ -1698,6 +2291,7 @@ class ThinMCPServer {
             );
             const additionalResults = await this.executeQueries(
               analysis.next_queries,
+              requestId,
             );
 
             // 特殊处理 desc_storage_volumes phase：将 desc_volume_<name> 结果转换为 storage_volume_details 格式
@@ -1727,6 +2321,7 @@ class ThinMCPServer {
             toolName,
             results,
             nextArgs,
+            requestId,
           );
         }
 
