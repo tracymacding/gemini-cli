@@ -466,6 +466,37 @@ class Logger {
   }
 
   /**
+   * 记录 SSH 命令执行
+   */
+  logSshCommand(requestId, nodeIp, nodeType, remoteCmd, fullCmd) {
+    this.write('INFO', 'SSH_COMMAND', 'Executing SSH command', {
+      requestId,
+      nodeIp,
+      nodeType,
+      remoteCommand: remoteCmd,
+      fullSshCommand: fullCmd,
+    }, true); // skipSanitize=true 保留完整命令
+  }
+
+  /**
+   * 记录 SSH 命令结果
+   */
+  logSshResult(requestId, nodeIp, nodeType, success, output, stderr, error, duration) {
+    const level = success ? 'INFO' : 'ERROR';
+    const message = success ? 'SSH command succeeded' : 'SSH command failed';
+    this.write(level, 'SSH_RESULT', message, {
+      requestId,
+      nodeIp,
+      nodeType,
+      success,
+      output: output ? output.substring(0, 500) : null, // 限制输出长度
+      stderr: stderr ? stderr.substring(0, 500) : null,
+      error: error || null,
+      durationMs: duration,
+    }, true);
+  }
+
+  /**
    * 记录环境变量
    */
   logEnvironmentVariables() {
@@ -1007,8 +1038,9 @@ class ThinMCPServer {
    * 执行 SSH 命令（用于日志分析等场景）
    * @param {Array} commands - SSH 命令列表
    * @param {object} sshConfig - SSH 配置 { user, keyPath, password }
+   * @param {string} requestId - 请求 ID（用于日志追踪）
    */
-  async executeSshCommands(commands, sshConfig = {}) {
+  async executeSshCommands(commands, sshConfig = {}, requestId = null) {
     const { exec } = await import('node:child_process');
     const { promisify } = await import('node:util');
     const execAsync = promisify(exec);
@@ -1063,14 +1095,25 @@ class ThinMCPServer {
             console.error(
               `   SSH to ${nodeIp}: ${remoteCmd.substring(0, 60)}...`,
             );
+
+            // 记录 SSH 命令到日志文件
+            if (requestId) {
+              this.logger.logSshCommand(requestId, nodeIp, cmd.node_type, remoteCmd, fullCmd);
+            }
+
             const cmdStartTime = Date.now();
 
-            const { stdout } = await execAsync(fullCmd, {
+            const { stdout, stderr } = await execAsync(fullCmd, {
               timeout: commandTimeoutMs,
               maxBuffer: 50 * 1024 * 1024, // 50MB（日志可能较大）
             });
 
             const duration = Date.now() - cmdStartTime;
+
+            // 记录 SSH 命令结果到日志文件
+            if (requestId) {
+              this.logger.logSshResult(requestId, nodeIp, cmd.node_type, true, stdout, stderr, null, duration);
+            }
 
             // 根据命令类型处理结果
             const commandType = cmd.command_type || 'generic';
@@ -1258,15 +1301,51 @@ class ThinMCPServer {
               };
             }
           } catch (error) {
-            console.error(`   SSH failed for ${cmd.node_ip}: ${error.message}`);
+            const duration = Date.now() - (cmdStartTime || Date.now());
+            const nodeIp = cmd.node_ip;
+            const commandType = cmd.command_type || 'generic';
+
+            // 检查是否有 stdout 输出（即使命令返回非零退出码）
+            // Node.js exec 在非零退出码时会抛异常，但 error.stdout 可能仍有有效输出
+            if (error.stdout && error.stdout.trim()) {
+              const output = error.stdout.trim();
+
+              // 记录到日志（有输出但命令返回非零退出码）
+              if (requestId) {
+                this.logger.logSshResult(requestId, nodeIp, cmd.node_type, true, output, error.stderr, `Exit code: ${error.code}, but has stdout`, duration);
+              }
+
+              // 对于 discover_log_path，如果有有效路径输出（以 / 开头），视为成功
+              if (commandType === 'discover_log_path' && output.startsWith('/')) {
+                console.error(`   SSH to ${nodeIp}: command returned non-zero but has valid output: ${output}`);
+                return {
+                  node_ip: nodeIp,
+                  node_type: cmd.node_type,
+                  command_type: commandType,
+                  success: true,
+                  output: output,
+                  execution_time_ms: duration,
+                  warning: `Command exited with code ${error.code} but produced valid output`,
+                };
+              }
+            }
+
+            // 记录失败到日志文件
+            if (requestId) {
+              this.logger.logSshResult(requestId, nodeIp, cmd.node_type, false, error.stdout, error.stderr, error.message, duration);
+            }
+
+            console.error(`   SSH failed for ${nodeIp}: ${error.message}`);
             return {
-              node_ip: cmd.node_ip,
+              node_ip: nodeIp,
               node_type: cmd.node_type,
               log_dir: cmd.log_dir, // 即使失败也保留 log_dir
               file_patterns: cmd.file_patterns,
-              command_type: cmd.command_type,
+              command_type: commandType,
               success: false,
               error: error.message,
+              stderr: error.stderr || null,  // 返回 stderr 便于调试
+              stdout: error.stdout || null,  // 返回 stdout 便于调试
             };
           }
         }),
@@ -2263,6 +2342,7 @@ class ThinMCPServer {
             const sshResults = await this.executeSshCommands(
               analysis.ssh_commands,
               sshConfig,
+              requestId,
             );
 
             // 根据 phase 使用不同的结果键名
