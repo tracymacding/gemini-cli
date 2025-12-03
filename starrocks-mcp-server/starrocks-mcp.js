@@ -469,31 +469,52 @@ class Logger {
    * 记录 SSH 命令执行
    */
   logSshCommand(requestId, nodeIp, nodeType, remoteCmd, fullCmd) {
-    this.write('INFO', 'SSH_COMMAND', 'Executing SSH command', {
-      requestId,
-      nodeIp,
-      nodeType,
-      remoteCommand: remoteCmd,
-      fullSshCommand: fullCmd,
-    }, true); // skipSanitize=true 保留完整命令
+    this.write(
+      'INFO',
+      'SSH_COMMAND',
+      'Executing SSH command',
+      {
+        requestId,
+        nodeIp,
+        nodeType,
+        remoteCommand: remoteCmd,
+        fullSshCommand: fullCmd,
+      },
+      true,
+    ); // skipSanitize=true 保留完整命令
   }
 
   /**
    * 记录 SSH 命令结果
    */
-  logSshResult(requestId, nodeIp, nodeType, success, output, stderr, error, duration) {
+  logSshResult(
+    requestId,
+    nodeIp,
+    nodeType,
+    success,
+    output,
+    stderr,
+    error,
+    duration,
+  ) {
     const level = success ? 'INFO' : 'ERROR';
     const message = success ? 'SSH command succeeded' : 'SSH command failed';
-    this.write(level, 'SSH_RESULT', message, {
-      requestId,
-      nodeIp,
-      nodeType,
-      success,
-      output: output ? output.substring(0, 500) : null, // 限制输出长度
-      stderr: stderr ? stderr.substring(0, 500) : null,
-      error: error || null,
-      durationMs: duration,
-    }, true);
+    this.write(
+      level,
+      'SSH_RESULT',
+      message,
+      {
+        requestId,
+        nodeIp,
+        nodeType,
+        success,
+        output: output ? output.substring(0, 500) : null, // 限制输出长度
+        stderr: stderr ? stderr.substring(0, 500) : null,
+        error: error || null,
+        durationMs: duration,
+      },
+      true,
+    );
   }
 
   /**
@@ -1098,7 +1119,13 @@ class ThinMCPServer {
 
             // 记录 SSH 命令到日志文件
             if (requestId) {
-              this.logger.logSshCommand(requestId, nodeIp, cmd.node_type, remoteCmd, fullCmd);
+              this.logger.logSshCommand(
+                requestId,
+                nodeIp,
+                cmd.node_type,
+                remoteCmd,
+                fullCmd,
+              );
             }
 
             const cmdStartTime = Date.now();
@@ -1112,7 +1139,16 @@ class ThinMCPServer {
 
             // 记录 SSH 命令结果到日志文件
             if (requestId) {
-              this.logger.logSshResult(requestId, nodeIp, cmd.node_type, true, stdout, stderr, null, duration);
+              this.logger.logSshResult(
+                requestId,
+                nodeIp,
+                cmd.node_type,
+                true,
+                stdout,
+                stderr,
+                null,
+                duration,
+              );
             }
 
             // 根据命令类型处理结果
@@ -1312,12 +1348,26 @@ class ThinMCPServer {
 
               // 记录到日志（有输出但命令返回非零退出码）
               if (requestId) {
-                this.logger.logSshResult(requestId, nodeIp, cmd.node_type, true, output, error.stderr, `Exit code: ${error.code}, but has stdout`, duration);
+                this.logger.logSshResult(
+                  requestId,
+                  nodeIp,
+                  cmd.node_type,
+                  true,
+                  output,
+                  error.stderr,
+                  `Exit code: ${error.code}, but has stdout`,
+                  duration,
+                );
               }
 
               // 对于 discover_log_path，如果有有效路径输出（以 / 开头），视为成功
-              if (commandType === 'discover_log_path' && output.startsWith('/')) {
-                console.error(`   SSH to ${nodeIp}: command returned non-zero but has valid output: ${output}`);
+              if (
+                commandType === 'discover_log_path' &&
+                output.startsWith('/')
+              ) {
+                console.error(
+                  `   SSH to ${nodeIp}: command returned non-zero but has valid output: ${output}`,
+                );
                 return {
                   node_ip: nodeIp,
                   node_type: cmd.node_type,
@@ -1332,7 +1382,16 @@ class ThinMCPServer {
 
             // 记录失败到日志文件
             if (requestId) {
-              this.logger.logSshResult(requestId, nodeIp, cmd.node_type, false, error.stdout, error.stderr, error.message, duration);
+              this.logger.logSshResult(
+                requestId,
+                nodeIp,
+                cmd.node_type,
+                false,
+                error.stdout,
+                error.stderr,
+                error.message,
+                duration,
+              );
             }
 
             console.error(`   SSH failed for ${nodeIp}: ${error.message}`);
@@ -1344,8 +1403,8 @@ class ThinMCPServer {
               command_type: commandType,
               success: false,
               error: error.message,
-              stderr: error.stderr || null,  // 返回 stderr 便于调试
-              stdout: error.stdout || null,  // 返回 stdout 便于调试
+              stderr: error.stderr || null, // 返回 stderr 便于调试
+              stdout: error.stdout || null, // 返回 stdout 便于调试
             };
           }
         }),
@@ -1645,6 +1704,26 @@ class ThinMCPServer {
       );
       for (const tableName of tablesWithCacheMiss) {
         tableNames.add(tableName);
+      }
+    }
+
+    return tableNames;
+  }
+
+  /**
+   * 从单个 profile 文本中提取所有表名
+   * @param {string} profileText - Profile 文本内容
+   * @returns {Set<string>} 表名集合（格式: database.table）
+   */
+  extractTableNamesFromSingleProfile(profileText) {
+    const tableNames = new Set();
+    const lines = profileText.split('\n');
+
+    for (const line of lines) {
+      // 匹配 "Table: database.table" 格式
+      const tableMatch = line.match(/^\s*-\s*Table:\s*(\S+\.\S+)/);
+      if (tableMatch) {
+        tableNames.add(tableMatch[1]);
       }
     }
 
@@ -2269,6 +2348,32 @@ class ThinMCPServer {
                 `   Fetched schemas for ${Object.keys(results.table_schemas).length} tables`,
               );
             }
+          }
+        }
+
+        // 2.7 如果有单个 profile 查询结果且需要获取表 schema
+        if (
+          metaQuery &&
+          metaQuery.requires_table_schema_fetch &&
+          results.get_profile &&
+          Array.isArray(results.get_profile) &&
+          results.get_profile.length > 0 &&
+          results.get_profile[0].profile
+        ) {
+          console.error(
+            '   Step 2.7: Extracting table names from profile and fetching schemas...',
+          );
+          const profileText = results.get_profile[0].profile;
+          const tableNames =
+            this.extractTableNamesFromSingleProfile(profileText);
+          console.error(
+            `   Found ${tableNames.size} unique tables: ${[...tableNames].slice(0, 5).join(', ')}${tableNames.size > 5 ? '...' : ''}`,
+          );
+          if (tableNames.size > 0) {
+            results.table_schemas = await this.fetchTableSchemas(tableNames);
+            console.error(
+              `   Fetched schemas for ${Object.keys(results.table_schemas).length} tables`,
+            );
           }
         }
 
