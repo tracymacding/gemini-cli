@@ -1711,23 +1711,102 @@ class ThinMCPServer {
   }
 
   /**
-   * 从单个 profile 文本中提取所有表名
+   * 从单个 profile 文本中提取所有表名和视图名
    * @param {string} profileText - Profile 文本内容
-   * @returns {Set<string>} 表名集合（格式: database.table）
+   * @returns {Set<string>} 对象名集合（格式: database.table 或 table）
    */
   extractTableNamesFromSingleProfile(profileText) {
-    const tableNames = new Set();
-    const lines = profileText.split('\n');
+    const objectNames = new Set();
 
+    // 1. 从 "Table: database.table" 行提取表名
+    const lines = profileText.split('\n');
     for (const line of lines) {
-      // 匹配 "Table: database.table" 格式
       const tableMatch = line.match(/^\s*-\s*Table:\s*(\S+\.\S+)/);
       if (tableMatch) {
-        tableNames.add(tableMatch[1]);
+        objectNames.add(tableMatch[1]);
       }
     }
 
-    return tableNames;
+    // 2. 从 SQL 语句中提取视图名（视图不会出现在 Table: 行中）
+    const sql = this.extractSQLFromProfile(profileText);
+    if (sql) {
+      const sqlObjects = this.extractTableNamesFromSQL(sql);
+      for (const objName of sqlObjects) {
+        // 如果对象名包含数据库前缀，直接添加
+        if (objName.includes('.')) {
+          objectNames.add(objName);
+        }
+      }
+    }
+
+    return objectNames;
+  }
+
+  /**
+   * 从 Profile 中提取 SQL 语句
+   * @param {string} profileText - Profile 文本内容
+   * @returns {string|null} SQL 语句
+   */
+  extractSQLFromProfile(profileText) {
+    if (!profileText) return null;
+
+    // 匹配 "SQL Statement:" 或 "Sql Statement:" 后面的 SQL
+    const sqlPattern =
+      /Sql\s+Statement:\s*([\s\S]*?)(?=\n\s*-\s+Variables:|$)/i;
+    const match = profileText.match(sqlPattern);
+
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+
+    return null;
+  }
+
+  /**
+   * 从 SQL 语句中提取表名和视图名
+   * @param {string} sql - SQL 语句
+   * @returns {Array<string>} 对象名数组
+   */
+  extractTableNamesFromSQL(sql) {
+    if (!sql) return [];
+
+    const objectNames = new Set();
+
+    // 匹配 FROM 和 JOIN 后面的对象名
+    // 支持格式：FROM table, FROM db.table, JOIN table, JOIN table AS alias
+    const patterns = [
+      /(?:FROM|JOIN)\s+([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+)/gi, // db.table
+      /(?:FROM|JOIN)\s+([a-zA-Z0-9_]+)(?:\s+(?:AS\s+)?[a-zA-Z0-9_]+)?/gi, // table 或 table AS alias
+    ];
+
+    patterns.forEach((pattern) => {
+      let match;
+      while ((match = pattern.exec(sql)) !== null) {
+        const objName = match[1];
+
+        // 过滤掉 SQL 关键字
+        const keywords = [
+          'SELECT',
+          'WHERE',
+          'GROUP',
+          'ORDER',
+          'LIMIT',
+          'HAVING',
+          'UNION',
+          'INNER',
+          'LEFT',
+          'RIGHT',
+          'OUTER',
+          'ON',
+          'USING',
+        ];
+        if (!keywords.includes(objName.toUpperCase())) {
+          objectNames.add(objName);
+        }
+      }
+    });
+
+    return Array.from(objectNames);
   }
 
   /**
@@ -1817,10 +1896,16 @@ class ThinMCPServer {
             `SHOW CREATE TABLE ${dbName}.${tableName}`,
           );
           if (rows && rows[0]) {
+            // 支持表和视图：表返回 'Create Table'，视图返回 'Create View'
             const createStatement =
-              rows[0]['Create Table'] || rows[0]['create_statement'] || '';
+              rows[0]['Create Table'] ||
+              rows[0]['Create View'] ||
+              rows[0]['create_statement'] ||
+              '';
+            const isView = !!rows[0]['Create View'];
             schemas[fullTableName] = {
               create_statement: createStatement,
+              object_type: isView ? 'VIEW' : 'TABLE',
               data_cache_enabled: this.checkDataCacheEnabled(createStatement),
             };
           }
